@@ -1,6 +1,7 @@
 """Fake Xtream Codes server for testing the app in a browser (no real provider account needed).
 
   python -I tools/mock_xtream.py            serves http://127.0.0.1:8766  (login demo / demo)
+  python -I tools/mock_xtream.py 8766 0.0.0.0   also reachable from the TV, at http://<PC address>:8766
 
 In the app: Playlists > Add Xtream Codes login > server http://127.0.0.1:8766, user demo, password demo.
 Or Add M3U link > http://127.0.0.1:8766/get.php?username=demo&password=demo&type=m3u_plus
@@ -14,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, quote
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8766
+HOST = sys.argv[2] if len(sys.argv) > 2 else '127.0.0.1'
 NOW = int(time.time())
 
 LIVE_URLS = [
@@ -177,5 +179,5 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == '__main__':
-    print(f'mock Xtream server on http://127.0.0.1:{PORT}  (login demo / demo)')
-    ThreadingHTTPServer(('127.0.0.1', PORT), H).serve_forever()
+    print(f'mock Xtream server on http://{HOST}:{PORT}  (login demo / demo)')
+    ThreadingHTTPServer((HOST, PORT), H).serve_forever()
