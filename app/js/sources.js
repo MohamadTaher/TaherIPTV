@@ -95,10 +95,7 @@ var Playlists = (function () {
     saved.list = saved.list.filter(function (p) { return p.id !== id; });
     if (saved.active === id) saved.active = saved.list.length ? saved.list[0].id : '';
     persist();
-    Library.KINDS.forEach(function (kind) {
-      Store.del('fav.' + id + '.' + kind);
-      Store.del('hist.' + id + '.' + kind);
-    });
+    Library.dropOwner(id);
   }
 
   function copy(o) { var out = {}; for (var k in o) if (o.hasOwnProperty(k)) out[k] = o[k]; return out; }
