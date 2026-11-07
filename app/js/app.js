@@ -30,6 +30,11 @@
   var NUM_MS = 1600;
   var PRELOAD_AFTER_PLAY_MS = 150;    // the new stream is already playing; start on the next ones at once
   var PRELOAD_FOCUS_MS = 700;         // focus must rest this long before its channel is pre-buffered
+  var FAV = [{ list: 'red', name: 'Red' }, { list: 'green', name: 'Green' }, { list: 'blue', name: 'Blue' }];
+  var HEART = '<path d="M12 20.3l-1.3-1.2C5.6 14.5 2.6 11.8 2.6 8.4c0-2.7 2.1-4.8 4.8-4.8 1.6 0 3.2.8 4.6 2.2 1.4-1.4 3-2.2 4.6-2.2 2.7 0 4.8 2.1 4.8 4.8 0 3.4-3 6.1-8.1 10.7z"/>';
+  var GRIP = '<svg viewBox="0 0 24 24" class="grip"><path d="M5 8h14M5 12h14M5 16h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>';
+  var EYE_OFF = '<svg viewBox="0 0 24 24" class="eye-off"><path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="2.6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4 20L20 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+  var EYE = '<svg viewBox="0 0 24 24" class="eye"><path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="2.6" fill="currentColor"/></svg>';
   var DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -54,8 +59,15 @@
     loadError: '',
     channels: [], cats: [], view: [],
     catIndex: 0, listIndex: 0,
-    zone: 'list',          // live guide: 'list' | 'cats' (drawer open) | 'search'
+    allCats: [],           // every category in the saved order; S.cats is the part the drawer lists
+    catMode: '',           // drawer: '' | 'reorder' (green key) | 'hide' (yellow key)
+    catHeld: false,        // reorder mode: the focused category is picked up and moves with up/down
+    zone: 'cats',          // live guide: 'list' | 'cats' (drawer open) | 'search'
     mode: 'guide',         // live: 'guide' | 'full'
+    favMode: false,        // red key: three hearts on every row, OK adds/removes the focused heart's list
+    heart: 0,              // focused heart in favourite mode (index into FAV)
+    moving: false,         // reorder mode (green key in a favourites category)
+    held: false,           // reorder mode: the focused channel is picked up and moves with up/down
     playing: null,
     state: 'idle', stateDetail: '',
     sort: Store.get('sort', 'num'),
@@ -136,7 +148,12 @@
 
   function sameCh(a, b) { return !!a && !!b && a.url === b.url; }
   function isLive() { return S.state === 'playing' || S.state === 'buffering'; }
-  function isFav(ch) { return !!ch && Library.isFav('live', ch.url); }
+  function isFav(ch, list) { return !!ch && Library.isFav('live', ch.url, list); }
+  function favLists(ch) { return ch ? Library.favLists('live', ch.url) : []; }
+  function heartSvg(list, on, cls) {
+    return '<svg viewBox="0 0 24 24" class="heart ' + list + (on ? ' on' : '') + (cls ? ' ' + cls : '') + '">' + HEART + '</svg>';
+  }
+  function favCat() { var c = S.cats[S.catIndex]; return c && c.id === 'fav' ? c : null; }
 
   /* ---------- screens ---------- */
 
@@ -163,6 +180,8 @@
       $('osd').classList.remove('show');
       document.body.classList.remove('full');
       S.mode = 'guide';
+      endModes();
+      if (S.catMode) { S.catMode = ''; S.catHeld = false; showCats(S.cats[S.catIndex]); }
       if (next !== 'playlists') stopLive();
     } else if (name === 'playlists') {
       $('playlists').classList.remove('show');
@@ -180,10 +199,12 @@
 
   /* ---------- data ---------- */
 
-  function favCount() {
-    var n = 0;
-    S.channels.forEach(function (ch) { if (isFav(ch)) n++; });
-    return n;
+  // Channels of one favourites list, in the list's own order.
+  function favChannels(list) {
+    var byUrl = {}, out = [];
+    S.channels.forEach(function (ch) { byUrl[ch.url] = ch; });
+    Library.favs('live', list).forEach(function (f) { if (byUrl[f.url || f.id]) out.push(byUrl[f.url || f.id]); });
+    return out;
   }
 
   // Live favourites and history are keyed by stream URL. Xtream live streams moved from .m3u8 to .ts
@@ -213,28 +234,58 @@
     });
     if (order) groups.sort(function (a, b) { return (order[a] === undefined ? 1e9 : order[a]) - (order[b] === undefined ? 1e9 : order[b]); });
     else groups.sort(function (a, b) { return a.localeCompare(b); });
-    S.cats = [{ id: 'all', name: 'All channels', count: S.channels.length },
-              { id: 'fav', name: 'Favourites', count: favCount() },
-              { id: 'recent', name: 'Recently watched', count: recentChannels().length }]
+    var rest = FAV.map(function (f) { return { id: 'fav', list: f.list, name: f.name + ' favourites', count: 0 }; })
+      .concat([{ id: 'recent', name: 'Recently watched', count: 0 }])
       .concat(groups.map(function (g) { return { id: 'group', group: g, name: g, count: counts[g] }; }));
+    // The saved order first; categories it does not know yet keep their own order after those.
+    var pos = {};
+    (Library.catPrefs('live').order || []).forEach(function (k, i) { pos[k] = i; });
+    rest = rest.map(function (c, i) { return { c: c, i: i, p: pos[catKey(c)] }; }).sort(function (a, b) {
+      if (a.p === undefined || b.p === undefined) return a.p === b.p ? a.i - b.i : a.p === undefined ? 1 : -1;
+      return a.p - b.p;
+    }).map(function (x) { return x.c; });
+    S.allCats = [{ id: 'all', name: 'All channels', count: S.channels.length }].concat(rest);
+    S.catMode = '';
+    S.catHeld = false;
+    refreshCounts();
+    showCats(null);
+  }
+
+  // Key a category is saved under. 'All channels' is always first and always shown.
+  function catKey(c) { return c.id === 'fav' ? 'fav-' + c.list : c.id === 'group' ? 'g:' + c.group : c.id; }
+  function isHidden(c) { var h = Library.catPrefs('live').hidden; return c.id !== 'all' && !!h && !!h[catKey(c)]; }
+
+  // S.cats is what the drawer lists: every category in hide mode, otherwise the shown ones. Focus stays on
+  // 'keep' when it is listed, else on the nearest shown category above it.
+  function showCats(keep) {
+    var all = S.catMode === 'hide';
+    if (keep && !all && isHidden(keep)) {
+      var i = S.allCats.indexOf(keep);
+      while (i > 0 && isHidden(S.allCats[i])) i--;
+      keep = S.allCats[Math.max(0, i)];
+    }
+    S.cats = all ? S.allCats.slice() : S.allCats.filter(function (c) { return !isHidden(c); });
+    var at = keep ? S.cats.indexOf(keep) : -1;
+    S.catIndex = at >= 0 ? at : clamp(S.catIndex, 0, Math.max(0, S.cats.length - 1));
   }
 
   function refreshCounts() {
-    if (!S.cats.length) return;
-    S.cats[1].count = favCount();
-    S.cats[2].count = recentChannels().length;
+    S.allCats.forEach(function (c) {
+      if (c.id === 'fav') c.count = favChannels(c.list).length;
+      else if (c.id === 'recent') c.count = recentChannels().length;
+    });
   }
 
   // Channels for the current category, filtered by the search text and sorted.
   function buildView(keepFocus) {
     var cat = S.cats[S.catIndex], focused = S.view[S.listIndex];
     var list = !cat ? [] : cat.id === 'all' ? S.channels
-      : cat.id === 'fav' ? S.channels.filter(isFav)
+      : cat.id === 'fav' ? favChannels(cat.list)
       : cat.id === 'recent' ? recentChannels()
       : S.channels.filter(function (ch) { return ch.group === cat.group; });
     var q = S.query.trim().toLowerCase();
     if (q) list = list.filter(function (ch) { return ch.name.toLowerCase().indexOf(q) !== -1 || String(ch.num) === q; });
-    if (S.sort === 'name' && cat && cat.id !== 'recent') list = list.slice().sort(function (a, b) { return a.name.localeCompare(b.name); });
+    if (S.sort === 'name' && cat && (cat.id === 'all' || cat.id === 'group')) list = list.slice().sort(function (a, b) { return a.name.localeCompare(b.name); });
     S.view = list;
 
     var target = keepFocus ? focused : S.playing, at = -1;
@@ -260,7 +311,7 @@
       buildCats();
       S.catIndex = 0;
       buildView(false);
-      S.zone = 'list';
+      S.zone = 'cats';
       S.loading = false;
       renderAll();
       var parts = [count(data.live.length) + ' channels'];
@@ -391,7 +442,8 @@
 
   function openLive() {
     S.mode = 'guide';
-    S.zone = 'list';
+    S.zone = 'cats';
+    endModes();
     refreshCounts();
     buildView(false);
     render();
@@ -463,6 +515,7 @@
   function goFull() {
     if (!S.playing) return;
     S.mode = 'full';
+    endModes();
     document.body.classList.add('full');
     renderLive();
     showOsd();
@@ -471,6 +524,7 @@
 
   function goGuide() {
     S.mode = 'guide';
+    S.zone = 'list';
     document.body.classList.remove('full');
     $('osd').classList.remove('show');
     for (var j = 0; j < S.view.length; j++) if (sameCh(S.view[j], S.playing)) { S.listIndex = j; break; }
@@ -498,18 +552,63 @@
     S.osdTimer = setTimeout(function () { $('osd').classList.remove('show'); }, OSD_MS);
   }
 
-  function toggleFav(ch) {
+  function toggleFav(ch, list) {
     if (!ch) return;
-    var on = Library.toggleFav('live', { id: ch.url, url: ch.url, name: ch.name, logo: ch.logo, group: ch.group });
+    var on = Library.toggleFav('live', { id: ch.url, url: ch.url, name: ch.name, logo: ch.logo, group: ch.group }, list);
+    var name = list.charAt(0).toUpperCase() + list.slice(1);
     refreshCounts();
-    if (S.cats[S.catIndex].id === 'fav') {
+    if (favCat() && favCat().list === list) {
       var keep = S.listIndex;
       buildView(true);
       S.listIndex = clamp(keep, 0, Math.max(0, S.view.length - 1));
     }
-    toast(on ? '♥  Added ' + ch.name + ' to favourites' : 'Removed ' + ch.name + ' from favourites');
+    toast(on ? '♥  Added ' + ch.name + ' to ' + name + ' favourites' : 'Removed ' + ch.name + ' from ' + name + ' favourites');
     render();
-    if (S.mode === 'full') showOsd();
+  }
+
+  function endModes() { S.favMode = false; S.moving = false; S.held = false; }
+
+  function setFavMode(on) {
+    endModes();
+    S.favMode = on;
+    render();
+  }
+
+  // Green in a favourites category turns reorder mode on and off.
+  function setReorder(on) {
+    if (on && S.query) { toast('Clear the search to reorder'); return; }
+    if (on && S.view.length < 2) { toast('Add at least two channels to reorder'); return; }
+    endModes();
+    S.moving = on;
+    render();
+  }
+
+  // Reorder mode: arrows move the focus; OK picks the focused channel up, and while it is held the
+  // arrows carry it through the list (saved at every step); OK or BACK puts it down.
+  function reorderKey(k) {
+    var cat = favCat(), ch = S.view[S.listIndex], last = S.view.length - 1, to = S.listIndex;
+    switch (k) {
+      case KEY.UP: to--; break;
+      case KEY.DOWN: to++; break;
+      case KEY.CH_UP: to -= LIST_ROWS; break;
+      case KEY.CH_DOWN: to += LIST_ROWS; break;
+      case KEY.ENTER: S.held = !S.held && !!ch; renderList(); return;
+      case KEY.BACK: if (S.held) { S.held = false; renderList(); } else setReorder(false); return;
+      case KEY.GREEN: setReorder(false); return;
+      case KEY.RED: setFavMode(true); return;
+      default: return;
+    }
+    to = clamp(to, 0, last);
+    if (to === S.listIndex) return;
+    if (S.held && cat && ch) {
+      Library.moveFav('live', cat.list, ch.url, to);
+      buildView(true);
+    } else {
+      S.listIndex = to;
+    }
+    renderList();
+    renderInfo();
+    renderLive();
   }
 
   function toggleSort() {
@@ -556,9 +655,15 @@
 
   /* ---------- live: rendering ---------- */
 
+  // Guide classes: focus zone, open drawer, the mode, and the colour of a favourites category.
+  function guideClass() {
+    var cat = favCat();
+    $('guide').className = 'guide zone-' + S.zone + (S.zone === 'cats' ? ' drawer-open' : '') +
+      (S.favMode ? ' mode-fav' : S.moving ? ' mode-reorder' : '') + (cat ? ' fav-' + cat.list : '');
+  }
+
   function render() {
-    var g = $('guide');
-    g.className = 'guide zone-' + S.zone + (S.zone === 'cats' ? ' drawer-open' : '');
+    guideClass();
     renderCats();
     renderList();
     renderInfo();
@@ -569,15 +674,29 @@
     var start = windowStart(S.catIndex, S.cats.length, CAT_ROWS), html = '';
     for (var i = start; i < Math.min(S.cats.length, start + CAT_ROWS); i++) {
       var c = S.cats[i];
-      html += '<div class="cat' + (i === S.catIndex ? (S.zone === 'cats' ? ' sel' : ' current') : '') + '">' +
-        '<span class="cat-name">' + esc(c.name) + '</span><span class="cat-count">' + c.count + '</span></div>';
+      var hideMode = S.catMode === 'hide', off = hideMode && isHidden(c), held = S.catHeld && i === S.catIndex;
+      var tail = c.count;
+      if (hideMode) tail = c.id === 'all' ? '' : off ? EYE_OFF : EYE;
+      else if (S.catMode === 'reorder') tail = c.count + (c.id !== 'all' ? GRIP : '');
+      html += '<div class="cat' + (c.id === 'fav' ? ' fav-' + c.list : '') + (i === S.catIndex ? (S.zone === 'cats' ? ' sel' : ' current') : '') +
+        (off ? ' off' : '') + (held ? ' held' : '') + '">' +
+        '<span class="cat-name">' + (held ? '<span class="cat-arrows">▲<br>▼</span>' : '') +
+        (c.id === 'fav' ? heartSvg(c.list, true, 'cat-heart') : '') + '<span class="cat-text">' + esc(c.name) + '</span></span>' +
+        '<span class="cat-count">' + tail + '</span></div>';
     }
     $('cats').innerHTML = html;
+    var pill = S.catMode === 'reorder' ? '<span class="mode-pill pill-reorder">' + GRIP + (S.catHeld ? 'Moving' : 'Reorder') + '</span>'
+      : S.catMode === 'hide' ? '<span class="mode-pill pill-hide">' + EYE_OFF + 'Hide</span>' : '';
+    $('drawer-title').innerHTML = 'Categories' + pill;
+    $('cat-legend').innerHTML = S.catHeld ? '<span><kbd>▲ ▼</kbd>Move</span><span><kbd>OK</kbd>Drop here</span>'
+      : S.catMode === 'reorder' ? '<span><kbd>OK</kbd>Pick up</span><span><i class="dot green"></i><kbd>BACK</kbd>Done</span>'
+      : S.catMode === 'hide' ? '<span><kbd>OK</kbd>Hide / show</span><span><i class="dot yellow"></i><kbd>BACK</kbd>Done</span>'
+      : '<span><kbd>OK</kbd>Open</span><span><i class="dot green"></i>Reorder</span><span><i class="dot yellow"></i>Hide</span>';
   }
 
   function renderList() {
     var el = $('list'), cat = S.cats[S.catIndex];
-    $('list-title').textContent = S.query ? 'Search · “' + S.query + '”' : (cat ? cat.name : '');
+    $('list-title').innerHTML = esc(S.query ? 'Search · “' + S.query + '”' : (cat ? cat.name : '')) + modePill();
     $('list-meta').innerHTML = S.view.length
       ? '<b>' + (S.listIndex + 1) + '</b> / ' + S.view.length + (S.sort === 'name' ? '  ·  A–Z' : '') : '';
 
@@ -592,10 +711,11 @@
       thumb.style.display = 'none';
     }
 
+    renderLegend();
     if (S.loading) { el.innerHTML = '<div class="empty"><div class="spinner" style="margin:0 auto 26px"></div>Loading playlist…</div>'; return; }
     if (!S.view.length) {
       el.innerHTML = '<div class="empty">' + (S.query ? 'No channels match “' + esc(S.query) + '”<small>Press BACK to clear the search</small>'
-        : cat && cat.id === 'fav' ? 'No favourites yet<small>Press the red button on a channel to add it</small>'
+        : cat && cat.id === 'fav' ? 'No ' + cat.name.toLowerCase() + ' yet<small>Press the red button, then OK on a ' + cat.list + ' heart</small>'
         : cat && cat.id === 'recent' ? 'Nothing watched yet'
         : 'No channels') + '</div>';
       return;
@@ -603,14 +723,52 @@
 
     var start = windowStart(S.listIndex, S.view.length, LIST_ROWS), html = '';
     for (var i = start; i < Math.min(S.view.length, start + LIST_ROWS); i++) {
-      var ch = S.view[i], on = sameCh(ch, S.playing);
-      html += '<div class="row' + (i === S.listIndex ? ' sel' : '') + (on ? ' playing' : '') + '">' +
+      var ch = S.view[i], on = sameCh(ch, S.playing), sel = i === S.listIndex;
+      var held = sel && S.held;
+      html += '<div class="row' + (sel ? ' sel' : '') + (on ? ' playing' : '') + (held ? ' held' : '') + '">' +
         logoHtml(ch, 'logo') +
-        '<span class="num">' + ch.num + '</span><span class="name">' + esc(ch.name) + '</span>' +
-        '<div class="tags">' + (isFav(ch) ? '<span class="fav">♥</span>' : '') +
-        (on && isLive() ? '<span class="eq"><i></i><i></i><i></i></span>' : '') + '</div></div>';
+        '<span class="num">' + (held ? '▲<br>▼' : ch.num) + '</span><span class="name">' + esc(ch.name) + '</span>' +
+        '<div class="tags">' + rowHearts(ch, sel) +
+        (on && isLive() ? '<span class="eq"><i></i><i></i><i></i></span>' : '') + (S.moving ? GRIP : '') + '</div></div>';
     }
     el.innerHTML = html;
+  }
+
+  // Favourite mode: all three hearts, filled when the channel is in that list, the focused one ringed.
+  // Otherwise: only the filled hearts.
+  function rowHearts(ch, sel) {
+    var html = '';
+    FAV.forEach(function (f, j) {
+      var on = isFav(ch, f.list);
+      if (S.favMode || on) html += heartSvg(f.list, on, S.favMode && sel && j === S.heart ? 'cur' : '');
+    });
+    return html ? '<span class="hearts' + (S.favMode ? ' edit' : '') + '">' + html + '</span>' : '';
+  }
+
+  // Badge after the list title while a mode is on.
+  function modePill() {
+    if (S.favMode) return '<span class="mode-pill pill-fav">' + heartSvg('red', true) + heartSvg('green', true) + heartSvg('blue', true) + 'Favourite mode</span>';
+    if (S.moving) return '<span class="mode-pill pill-reorder">' + GRIP + (S.held ? 'Moving' : 'Reorder mode') + '</span>';
+    return '';
+  }
+
+  // Bottom key legend of the guide; it follows the mode.
+  function renderLegend() {
+    var html;
+    if (S.moving && S.held) html = '<span><kbd>▲ ▼</kbd>Move channel</span><span><kbd>OK</kbd>Drop here</span>';
+    else if (S.moving) {
+      html = '<span><kbd>▲ ▼</kbd>Choose</span><span><kbd>OK</kbd>Pick up</span>' +
+        '<span><i class="dot green"></i><kbd>BACK</kbd>Done</span>';
+    } else if (S.favMode) {
+      html = '<span><kbd>◀ ▶</kbd>Pick a heart</span><span><kbd>OK</kbd>Add / remove</span>' +
+        '<span><i class="dot red"></i><kbd>BACK</kbd>Done</span>';
+    } else {
+      html = '<span><kbd>◀</kbd>Categories</span><span><i class="dot red"></i>Favourites</span>' +
+        '<span><i class="dot green"></i>' + (favCat() ? 'Reorder' : 'Sort') + '</span>' +
+        '<span><i class="dot yellow"></i>Search</span><span><i class="dot blue"></i>Playlists</span>' +
+        '<span><kbd>OK</kbd>Watch</span>';
+    }
+    $('live-legend').innerHTML = html;
   }
 
   // Static part of the info panel: the focused channel.
@@ -689,7 +847,7 @@
       $('o-logo').setAttribute('data-url', ch.url);
     }
     $('o-num').textContent = ch.num;
-    $('o-name').innerHTML = esc(ch.name) + (isFav(ch) ? ' <span style="color:var(--key-red)">♥</span>' : '');
+    $('o-name').innerHTML = esc(ch.name) + ' ' + rowHearts(ch, false);
     $('o-now').innerHTML = '<span class="k">Now</span>' + (p.duration > 0 ? dur(p.time) + ' / ' + dur(p.duration) : isLive() ? 'Live' : esc(S.state));
     $('o-next').innerHTML = '<span class="k">Group</span><span class="v">' + esc(ch.group) + '</span>';
     $('o-time').textContent = hhmm(now);
@@ -894,7 +1052,7 @@
       PL.confirm = '';
       toast('Deleted ' + it.pl.name);
       if (wasActive) {
-        S.data = null; S.channels = []; S.cats = []; S.view = [];
+        S.data = null; S.channels = []; S.cats = []; S.allCats = []; S.view = [];
         var next = Playlists.active();
         if (next) loadPlaylist(next).catch(function () { /* shown on home */ });
         else { S.loadError = 'No playlist. Add one in Playlists.'; }
@@ -980,21 +1138,95 @@
     try { tizen.application.getCurrentApplication().exit(); } catch (e) { toast('Exit only works on the TV'); }
   }
 
+  // BACK in the channel list: clear the search first, then go back to the categories.
   function liveBack() {
     if (S.query) { S.query = ''; searchInput().value = ''; buildView(true); render(); return; }
-    go('home');
+    S.zone = 'cats';
+    render();
+  }
+
+  // Drawer modes: '' (browse), 'reorder' or 'hide'.
+  function setCatMode(mode) {
+    var c = S.cats[S.catIndex];
+    S.catMode = mode;
+    S.catHeld = false;
+    showCats(c);
+    if (!mode) buildView(false);
+    render();
+  }
+
+  // Reorder mode: arrows move the focus; OK picks a category up and the arrows then carry it (saved at
+  // every step); OK or BACK puts it down. Green, or BACK with nothing held, ends the mode.
+  // Hidden categories are not listed; a moved category lands next to the shown one it passes.
+  function catReorderKey(k) {
+    var c = S.cats[S.catIndex], to = S.catIndex, p = Library.catPrefs('live');
+    switch (k) {
+      case KEY.UP: to--; break;
+      case KEY.DOWN: to++; break;
+      case KEY.CH_UP: to -= CAT_ROWS; break;
+      case KEY.CH_DOWN: to += CAT_ROWS; break;
+      case KEY.ENTER:
+        if (c.id === 'all') { toast('All channels stays at the top'); return; }
+        S.catHeld = !S.catHeld;
+        renderCats();
+        return;
+      case KEY.BACK: if (S.catHeld) { S.catHeld = false; renderCats(); } else setCatMode(''); return;
+      case KEY.GREEN: setCatMode(''); return;
+      default: return;
+    }
+    to = clamp(to, S.catHeld ? 1 : 0, S.cats.length - 1);
+    if (to === S.catIndex) return;
+    if (S.catHeld) {
+      var past = S.cats[to];
+      S.allCats.splice(S.allCats.indexOf(c), 1);
+      S.allCats.splice(S.allCats.indexOf(past) + (to > S.catIndex ? 1 : 0), 0, c);
+      p.order = S.allCats.slice(1).map(catKey);
+      Library.saveCatPrefs('live');
+      showCats(c);
+    } else {
+      S.catIndex = to;
+    }
+    renderCats();
+  }
+
+  // Hide mode: every category is listed with an eye; OK hides or shows the focused one. Yellow or BACK ends.
+  function catHideKey(k) {
+    var c = S.cats[S.catIndex], p = Library.catPrefs('live');
+    switch (k) {
+      case KEY.UP: S.catIndex--; break;
+      case KEY.DOWN: S.catIndex++; break;
+      case KEY.CH_UP: S.catIndex -= CAT_ROWS; break;
+      case KEY.CH_DOWN: S.catIndex += CAT_ROWS; break;
+      case KEY.ENTER:
+        if (c.id === 'all') { toast('All channels cannot be hidden'); return; }
+        p.hidden = p.hidden || {};
+        if (p.hidden[catKey(c)]) delete p.hidden[catKey(c)]; else p.hidden[catKey(c)] = true;
+        Library.saveCatPrefs('live');
+        break;
+      case KEY.BACK: case KEY.YELLOW: setCatMode(''); return;
+      default: return;
+    }
+    S.catIndex = clamp(S.catIndex, 0, S.cats.length - 1);
+    renderCats();
   }
 
   function catsKey(k) {
+    if (S.catMode === 'reorder') { catReorderKey(k); return; }
+    if (S.catMode === 'hide') { catHideKey(k); return; }
     switch (k) {
       case KEY.UP: case KEY.DOWN: case KEY.CH_UP: case KEY.CH_DOWN:
         var step = k === KEY.UP ? -1 : k === KEY.DOWN ? 1 : k === KEY.CH_UP ? -CAT_ROWS : CAT_ROWS;
         S.catIndex = clamp(S.catIndex + step, 0, S.cats.length - 1);
+        S.moving = false;
+        S.held = false;
         buildView(false);
         break;
-      case KEY.ENTER: case KEY.RIGHT: case KEY.BACK:
+      case KEY.ENTER: case KEY.RIGHT:
         S.zone = 'list';
         break;
+      case KEY.BACK: go('home'); return;
+      case KEY.GREEN: setCatMode('reorder'); return;
+      case KEY.YELLOW: setCatMode('hide'); return;
       case KEY.BLUE: go('playlists'); return;
       default: return;
     }
@@ -1004,6 +1236,15 @@
 
   function listKey(k) {
     var ch = S.view[S.listIndex], last = Math.max(0, S.view.length - 1);
+    if (S.moving) { reorderKey(k); return; }
+    if (S.favMode) {
+      switch (k) {
+        case KEY.LEFT: S.heart = clamp(S.heart - 1, 0, FAV.length - 1); renderList(); return;
+        case KEY.RIGHT: S.heart = clamp(S.heart + 1, 0, FAV.length - 1); renderList(); return;
+        case KEY.ENTER: toggleFav(ch, FAV[S.heart].list); return;
+        case KEY.RED: case KEY.BACK: setFavMode(false); return;
+      }
+    }
     switch (k) {
       case KEY.UP:
         if (S.listIndex === 0) S.zone = 'search'; else S.listIndex--;
@@ -1022,8 +1263,8 @@
         if (!sameCh(ch, S.playing)) play(ch);
         goFull();
         return;
-      case KEY.RED: toggleFav(ch); return;
-      case KEY.GREEN: toggleSort(); return;
+      case KEY.RED: setFavMode(true); return;
+      case KEY.GREEN: if (favCat()) setReorder(true); else toggleSort(); return;
       case KEY.YELLOW: S.zone = 'search'; render(); searchInput().focus(); return;
       case KEY.BLUE: go('playlists'); return;
       case KEY.STOP: Player.stop(); S.playing = null; document.body.classList.remove('has-video'); break;
@@ -1033,7 +1274,7 @@
     renderList();
     renderInfo();
     renderLive();
-    $('guide').className = 'guide zone-' + S.zone + (S.zone === 'cats' ? ' drawer-open' : '');
+    guideClass();
     if (S.zone === 'cats') renderCats();
     schedulePreload(PRELOAD_FOCUS_MS);
   }
@@ -1042,12 +1283,13 @@
     switch (k) {
       case KEY.UP: case KEY.CH_UP: zap(1); break;
       case KEY.DOWN: case KEY.CH_DOWN: zap(-1); break;
-      case KEY.ENTER: case KEY.INFO:
+      case KEY.ENTER: goGuide(); break;     // back to the channel list it plays from
+      case KEY.INFO:
         if ($('osd').classList.contains('show')) $('osd').classList.remove('show'); else showOsd();
         break;
       case KEY.LEFT: case KEY.RIGHT: showOsd(); break;
       case KEY.GREEN: toggleAspect(); break;
-      case KEY.RED: toggleFav(S.playing); break;
+      case KEY.RED: goGuide(); setFavMode(true); break;
       case KEY.BLUE: goGuide(); go('playlists'); break;
       case KEY.STOP: Player.stop(); S.playing = null; document.body.classList.remove('has-video'); goGuide(); break;
       case KEY.BACK: goGuide(); break;
