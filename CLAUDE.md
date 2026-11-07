@@ -14,12 +14,9 @@ Repo: github.com/MohamadTaher/TaherIPTV.
 
 ## Git workflow
 
-Follow [CONTRIBUTING.md](CONTRIBUTING.md) (GitHub Flow, Conventional Commits, SemVer). In short:
-
-- Never commit to `main`. Branch from `main` as `<type>/<short-description>` (`feat/`, `fix/`, `perf/`, `docs/`, ...).
-- Commits: `<type>(<scope>): <description>`, imperative, at most 72 characters, one logical change each.
-- Open a pull request with the template filled in, merge with "Rebase and merge", delete the branch.
-- Push and merge only when the user asks.
+Follow [CONTRIBUTING.md](CONTRIBUTING.md): a light GitHub Flow for a personal project. Short branches
+(`feat/`, `fix/`, `docs/`, `chore/`) merged into `main`, Conventional Commit messages. Keep it simple.
+Push and merge only when the user asks.
 
 ## Testing: browser first, TV only when needed
 
