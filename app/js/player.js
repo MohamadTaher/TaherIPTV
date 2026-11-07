@@ -134,8 +134,12 @@ var Player = (function () {
     var p = e.p;
     e.role = role; e.url = url; e.ready = false; e.failed = false; e.started = false;
     e.opened = Date.now(); e.onReady = null; e.claim = 0;
+    e.bitrate = 0; e.switched = false;
     p.open(url);
     if (ua) { try { p.setStreamingProperty('USER_AGENT', ua); } catch (err) { /* optional */ } }
+    // UHD mode, set between open and prepare. Single-quality 4K streams play at 3840x2160 without it
+    // (tested on the TV 2026-11-07); Samsung's docs require it for adaptive streams to pick UHD variants.
+    try { p.setStreamingProperty('SET_MODE_4K', 'TRUE'); } catch (err) { /* not a UHD model */ }
     try { p.setBufferingParam('PLAYER_BUFFER_FOR_PLAY', 'PLAYER_BUFFER_SIZE_IN_SECOND', START_BUFFER_S); } catch (err) { /* optional */ }
     p.setListener({
       // Buffering before the first frame is part of 'loading'; only stalls after it are shown.
@@ -144,7 +148,13 @@ var Player = (function () {
       onbufferingcomplete: function () { if (e.started) emitFor(e, 'playing'); },
       onstreamcompleted: function () { emitFor(e, 'ended'); },
       oncurrentplaytime: function () {},
-      onevent: function () {},
+      // Adaptive streams switch quality as bandwidth changes; remember the bitrate for info().
+      onevent: function (type, data) {
+        if (type !== 'PLAYER_MSG_BITRATE_CHANGE') return;
+        var m = /(\d+)/.exec(data || ''), br = m ? parseInt(m[1], 10) : 0;
+        if (e.bitrate && br !== e.bitrate) e.switched = true;
+        e.bitrate = br;
+      },
       onerror: function (err) { failed(e, String(err)); }
     });
     p.setDisplayRect(RECT[0], RECT[1], RECT[2], RECT[3]);
@@ -405,15 +415,62 @@ var Player = (function () {
     try { out.state = av.getState(); } catch (e) { out.state = 'ERR ' + e.message; }
     try { out.time = av.getCurrentTime(); } catch (e) { /* not playing */ }
     try { out.duration = av.getDuration(); } catch (e) { /* live or not ready */ }
+    try { out.tracks = av.getCurrentStreamInfo(); } catch (e) { /* not ready */ }
+    var size = videoSize(active, out.tracks);
+    if (size) { out.width = size.w; out.height = size.h; }
+    out.bitrate = active.bitrate;
+    return out;
+  }
+
+  function trackSize(t) {
     try {
-      out.tracks = av.getCurrentStreamInfo();
-      out.tracks.forEach(function (t) {
-        if (t.type !== 'VIDEO') return;
-        var x = JSON.parse(t.extra_info);
-        out.width = parseInt(x.Width, 10) || 0;
-        out.height = parseInt(x.Height, 10) || 0;
-      });
-    } catch (e) { /* not ready */ }
+      var x = JSON.parse(t.extra_info);
+      return { w: parseInt(x.Width, 10) || 0, h: parseInt(x.Height, 10) || 0, br: parseInt(x.Bit_rate, 10) || 0 };
+    } catch (err) { return null; }
+  }
+
+  // AVPlay keeps reporting the size an adaptive stream started with, even after it switches quality:
+  // getCurrentStreamInfo updates Bit_rate but not Width/Height, and getTotalTrackInfo lists only the
+  // first variant (seen on the TV 2026-11-07). So once the bitrate has changed, the size comes from
+  // the manifest: the variant whose bitrate is closest. Single-quality streams never fetch anything.
+  function videoSize(e, current) {
+    var cur = null;
+    (current || []).forEach(function (t) { if (t.type === 'VIDEO') cur = trackSize(t); });
+    if (!e.switched || !cur) return cur;
+    var list = variants[e.url];
+    if (!list) { fetchVariants(e.url); return cur; }
+    var best = null;
+    list.forEach(function (s) { if (!best || Math.abs(s.br - e.bitrate) < Math.abs(best.br - e.bitrate)) best = s; });
+    return best || cur;
+  }
+
+  var variants = {};      // stream url -> [{ w, h, br }] from its manifest; [] while loading or if it has none
+  var variantCount = 0;
+
+  function fetchVariants(url) {
+    if (++variantCount > 50) { variants = {}; variantCount = 1; }
+    variants[url] = [];
+    var x = new XMLHttpRequest();
+    x.open('GET', url);
+    x.timeout = 5000;
+    x.onload = function () { if (x.status === 200) variants[url] = parseVariants(x.responseText || ''); };
+    x.send();
+  }
+
+  // HLS master playlist (#EXT-X-STREAM-INF) or DASH manifest (<Representation>).
+  function parseVariants(text) {
+    var out = [], m, a, b, w, h;
+    var hls = /#EXT-X-STREAM-INF:([^\r\n]*)/g, dash = /<Representation\b([^>]*)>/g;
+    while ((m = hls.exec(text))) {
+      b = /(?:^|,)BANDWIDTH=(\d+)/.exec(m[1]);
+      w = /RESOLUTION=(\d+)x(\d+)/.exec(m[1]);
+      if (b && w) out.push({ br: +b[1], w: +w[1], h: +w[2] });
+    }
+    while ((m = dash.exec(text))) {
+      a = m[1];
+      b = /bandwidth="(\d+)"/.exec(a); w = /width="(\d+)"/.exec(a); h = /height="(\d+)"/.exec(a);
+      if (b && w && h) out.push({ br: +b[1], w: +w[1], h: +h[1] });
+    }
     return out;
   }
 
