@@ -11,7 +11,7 @@ Several commands can be chained with '+':  keys enter + wait 5 + eval "S.state"
 import base64, json, os, re, socket, struct, subprocess, sys, time, urllib.request
 
 SDB = r'C:\tizen-studio\tools\sdb.exe'
-SERIAL = '192.168.1.78:26101'
+SERIAL = os.environ.get('TV_SERIAL', '192.168.1.78:26101')  # set TV_SERIAL=192.168.1.64:26101 for the living room TV
 APP = 'TaherIPTV0.TaherIPTV'
 PORT = 9222
 
