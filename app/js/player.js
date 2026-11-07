@@ -11,7 +11,9 @@
    - some streams never finish preparing; a player can end up broken (its state reads wrong and
      every prepare hangs), so a player that hangs twice in a row, or refuses to open, is retired;
    - a failed pre-buffer is retried, PRE_TRIES times in all, then that stream is skipped;
-   - hosts that refuse a second connection (common for paid IPTV accounts) get normal starts only. */
+   - hosts that refuse a second connection (common for paid IPTV accounts) get normal starts only.
+
+   Movies and episodes (js/vod.js) add play(url, ua, startMs) to resume, plus seek, pause, resume and paused. */
 var Player = (function () {
   'use strict';
 
@@ -24,6 +26,7 @@ var Player = (function () {
   var PRE_TRIES = 3;          // attempts per stream before pre-buffering it is given up
   var PRE_RETRY_MS = 500;     // pause before retrying a failed pre-buffer
   var START_BUFFER_S = 1;     // seconds buffered before the first frame
+  var SEEK_WAIT_MS = 4000;    // start playing even if the resume seek never answers
   var ZAP_GAP_MS = 600;       // a play this soon after the previous one counts as a fast zap...
   var ZAP_WAIT_MS = 350;      // ...and waits this long, so channels passed over are never opened
   var POOL_MAX = 4;           // AVPlayStore limit, measured on the TV
@@ -37,6 +40,7 @@ var Player = (function () {
   var token = 0;          // bumps on every play/stop so late callbacks from old streams are ignored
   var pending = 0;        // timer of a play that has not started yet
   var lastPlay = 0;
+  var startAt = 0;        // resume position (ms) of the current play(); 0 = from the start
   var onState = function () {};
   var preloadOn = true;
   var singleHosts = loadHosts();
@@ -207,11 +211,20 @@ var Player = (function () {
 
   function begin(e) {
     if (e !== active) return;
-    try {
-      e.p.play();
-      e.started = true;
-      emitFor(e, 'playing');
-    } catch (err) { emitFor(e, 'error', err.message || String(err)); }
+    var done = false, at = e.tok === token ? startAt : 0;
+    function start() {
+      if (done || e !== active) return;
+      done = true;
+      try {
+        e.p.play();
+        e.started = true;
+        emitFor(e, 'playing');
+      } catch (err) { emitFor(e, 'error', err.message || String(err)); }
+    }
+    if (at > 0) {   // resume: seek while ready, then play
+      try { e.p.seekTo(at, start, start); setTimeout(start, SEEK_WAIT_MS); return; } catch (err) { /* start from the beginning */ }
+    }
+    start();
   }
 
   /* ---------- switching ---------- */
@@ -265,8 +278,9 @@ var Player = (function () {
     else startCold(my, url, ua);
   }
 
-  function playHtml(url) {
+  function playHtml(url, startMs) {
     var my = token;
+    vid.onloadedmetadata = startMs > 0 ? function () { if (my === token) vid.currentTime = startMs / 1000; } : null;
     vid.onwaiting = function () { if (my === token) onState('buffering', ''); };
     vid.onplaying = function () { if (my === token) onState('playing', ''); };
     vid.onended = function () { if (my === token) onState('ended', ''); };
@@ -281,15 +295,16 @@ var Player = (function () {
   }
 
   // Reports 'loading' at once, lets the page paint it, then swaps streams.
-  function play(url, ua) {
+  function play(url, ua, startMs) {
     token++;
+    startAt = startMs > 0 ? startMs : 0;
     var my = token, now = Date.now();
     clearTimeout(pending);
     onState('loading', '');
     function go() {
       if (my !== token) return;
       if (native) playAv(my, url, ua);
-      else { vid.pause(); playHtml(url); }
+      else { vid.pause(); playHtml(url, startAt); }
     }
     // Fast zaps wait a moment so channels passed over are never opened, unless the target is pre-buffered.
     if (!(native && preFor(url)) && now - lastPlay < ZAP_GAP_MS) pending = setTimeout(go, ZAP_WAIT_MS);
@@ -299,10 +314,42 @@ var Player = (function () {
 
   function stop() {
     token++;
+    startAt = 0;
     clearTimeout(pending);
     if (native) pool.forEach(release);
     else { vid.pause(); vid.removeAttribute('src'); vid.load(); }
     onState('idle', '');
+  }
+
+  /* ---------- movies and episodes: seek and pause ---------- */
+
+  // Jumps to an absolute position (ms), kept inside the video. Before the first frame it sets the start instead.
+  function seek(ms) {
+    ms = Math.max(0, Math.round(ms));
+    if (!native) {
+      if (isFinite(vid.duration)) ms = Math.min(ms, Math.max(0, vid.duration * 1000 - 500));
+      try { vid.currentTime = ms / 1000; } catch (e) { /* not loaded yet */ }
+      return;
+    }
+    if (!active) return;
+    if (!active.started) { startAt = ms; return; }
+    try { var d = active.p.getDuration(); if (d > 0) ms = Math.min(ms, Math.max(0, d - 500)); } catch (e) { /* unknown length */ }
+    try { active.p.seekTo(ms, function () {}, function () {}); } catch (e) { /* not seekable */ }
+  }
+
+  function pause() {
+    if (!native) { vid.pause(); return; }
+    if (active && active.started) { try { active.p.pause(); } catch (e) { /* not playing */ } }
+  }
+
+  function resume() {
+    if (!native) { var p = vid.play(); if (p && p.catch) p.catch(function () { /* reported through onerror */ }); return; }
+    if (active && active.started) { try { active.p.play(); } catch (e) { /* not paused */ } }
+  }
+
+  function paused() {
+    if (!native) return vid.paused;
+    try { return !!active && active.p.getState() === 'PAUSED'; } catch (e) { return false; }
   }
 
   // Keep these channels pre-buffered ([{url, ua}], most likely first) and drop the rest.
@@ -374,6 +421,10 @@ var Player = (function () {
     native: native,
     play: play,
     stop: stop,
+    seek: seek,
+    pause: pause,
+    resume: resume,
+    paused: paused,
     preload: preload,
     setPreload: setPreload,
     isPreloaded: function (url) { var e = native && preFor(url); return !!(e && e.ready); },
