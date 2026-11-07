@@ -1,0 +1,10 @@
+.build/
+*.wgt
+*.p12
+author-signature.xml
+signature*.xml
+.sign/
+__pycache__/
+*.pyc
+.claude/*
+!.claude/launch.json
