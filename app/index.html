@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1920, height=1080, user-scalable=no">
+<title>Taher IPTV</title>
+<link rel="stylesheet" href="css/style.css">
+<!-- Samsung TV APIs (AVPlay). Missing in a desktop browser; the app falls back to <video>. -->
+<script src="$WEBAPIS/webapis/webapis.js"></script>
+</head>
+<body>
+
+<!-- Video sits under the page, always full screen. AVPlay draws on a plane behind the page. -->
+<object id="av-player" type="application/avplayer"></object>
+<video id="html-player" playsinline></video>
+
+<div id="guide" class="guide">
+  <div class="scrim"></div>
+
+  <aside class="drawer">
+    <div class="drawer-head">
+      <span>Categories</span>
+      <svg viewBox="0 0 24 24" class="icon"><rect x="2.5" y="4" width="19" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 20.5h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </div>
+    <div id="cats" class="cats"></div>
+  </aside>
+
+  <section class="channels">
+    <div class="list-head"><span id="list-title"></span><span id="list-meta"></span></div>
+    <div id="list" class="list"></div>
+    <div class="scroll"><i id="scroll-thumb"></i></div>
+  </section>
+
+  <section class="info">
+    <div class="info-top">
+      <div id="search" class="search">
+        <svg viewBox="0 0 24 24" class="icon"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M15.5 15.5l5 5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>
+        <input id="search-input" type="text" placeholder="Search channels" spellcheck="false" autocomplete="off">
+      </div>
+      <div class="clock"><div id="clock-time"></div><div id="clock-date"></div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div id="i-logo"></div>
+        <div class="card-title">
+          <div id="i-name" class="i-name"></div>
+          <div id="i-sub" class="i-sub"></div>
+        </div>
+      </div>
+      <div id="i-badges" class="badges"></div>
+      <div class="epg">
+        <div id="i-now-time" class="epg-time"></div>
+        <div id="i-now" class="epg-title"></div>
+        <div class="progress"><i id="i-progress"></i></div>
+        <div id="i-next" class="epg-next"></div>
+      </div>
+    </div>
+
+    <div class="legend">
+      <span><kbd>◀</kbd>Categories</span>
+      <span><i class="dot red"></i>Favourite</span>
+      <span><i class="dot green"></i>Sort</span>
+      <span><i class="dot yellow"></i>Search</span>
+      <span><i class="dot blue"></i>Playlists</span>
+      <span><kbd>OK</kbd>Full screen</span>
+    </div>
+  </section>
+</div>
+
+<div id="full-state" class="state full-state"></div>
+
+<div id="osd" class="osd">
+  <div id="o-logo"></div>
+  <div class="osd-main">
+    <div class="osd-title"><span id="o-num" class="osd-num"></span><span id="o-name"></span></div>
+    <div id="o-now" class="osd-line"></div>
+    <div id="o-next" class="osd-line next"></div>
+  </div>
+  <div class="osd-right">
+    <div id="o-time" class="osd-time"></div>
+    <div id="o-date" class="osd-date"></div>
+    <div id="o-badges" class="osd-badges"></div>
+  </div>
+</div>
+
+<div id="numbox" class="numbox"></div>
+
+<div id="settings" class="modal">
+  <div class="sheet">
+    <h2>Playlists</h2>
+    <div id="set-current" class="set-current"></div>
+    <div id="set-items"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="js/m3u.js"></script>
+<script src="js/player.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
