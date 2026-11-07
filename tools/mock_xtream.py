@@ -21,11 +21,11 @@ LIVE_URLS = [
     'https://demo.unified-streaming.com/k8s/live/stable/live.isml/.m3u8',
     'https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_16x9/bipbop_16x9_variant.m3u8',
 ]
-MP4 = [
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
+MP4 = [  # checked reachable 2026-11-07 (Google's gtv-videos-bucket samples now return 403)
+    'https://samplelib.com/mp4/sample-30s.mp4',
+    'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_1MB.mp4',
+    'https://samplelib.com/mp4/sample-20s.mp4',
+    'https://test-videos.co.uk/vids/sintel/mp4/h264/720/Sintel_720_10s_1MB.mp4',
 ]
 
 LIVE_CATS = [('1', 'News'), ('2', 'Sports'), ('3', 'Kids')]
