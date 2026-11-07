@@ -11,14 +11,17 @@ Needs the app server running (`app` in .claude/launch.json, http://localhost:876
   python -I tools/webcheck.py stop                  close the browser
 
 Chain commands with '+', as in tvdebug.py.
+
+To run two checks side by side (e.g. from two worktrees), set WEBCHECK_URL (app address, default
+http://localhost:8765/) and WEBCHECK_PORT (Chrome debugging port, default 9333) per check.
 """
 import json, os, subprocess, sys, tempfile, time, urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tvdebug  # noqa: E402
 
-PORT = 9333
-URL = 'http://localhost:8765/'
+PORT = int(os.environ.get('WEBCHECK_PORT', '9333'))
+URL = os.environ.get('WEBCHECK_URL', 'http://localhost:8765/')
 CHROME = [r'C:\Program Files\Google\Chrome\Application\chrome.exe',
           r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe']
 
