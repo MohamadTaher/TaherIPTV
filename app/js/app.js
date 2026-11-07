@@ -186,6 +186,18 @@
     return n;
   }
 
+  // Live favourites and history are keyed by stream URL. Xtream live streams moved from .m3u8 to .ts
+  // (2026-11-07, faster start), so saved entries are moved to the URL the list now has.
+  function moveLiveKeys() {
+    var byUrl = {};
+    S.channels.forEach(function (ch) { byUrl[ch.url] = true; });
+    Library.rekey('live', function (url) {
+      if (!url || byUrl[url]) return null;
+      var alt = url.replace(/\.m3u8$/, '.ts');
+      return alt !== url && byUrl[alt] ? alt : null;
+    });
+  }
+
   function recentChannels() {
     var byUrl = {}, out = [];
     S.channels.forEach(function (ch) { byUrl[ch.url] = ch; });
@@ -242,6 +254,7 @@
       Library.setOwner(pl.id);
       S.data = data;
       S.channels = data.live;
+      moveLiveKeys();
       S.query = '';
       $('search-input').value = '';
       buildCats();
@@ -254,8 +267,15 @@
       if (data.movies.length) parts.push(count(data.movies.length) + ' movies');
       if (data.series.length) parts.push(count(data.series.length) + ' series');
       toast('Loaded ' + pl.name + ' · ' + parts.join(' · '));
-      for (var name in screens) if (screens.hasOwnProperty(name) && screens[name].onLoad) screens[name].onLoad(data);
-      loadListeners.forEach(function (fn) { fn(data); });
+      announce(data);
+      // Xtream movies and series arrive after the live channels.
+      if (data.vod) {
+        data.vod.then(function () {
+          if (S.data !== data) return;   // another playlist was loaded meanwhile
+          renderAll();
+          announce(data);
+        });
+      }
       return data;
     }).catch(function (err) {
       S.loading = false;
@@ -264,6 +284,11 @@
       renderAll();
       throw err;
     });
+  }
+
+  function announce(data) {
+    for (var name in screens) if (screens.hasOwnProperty(name) && screens[name].onLoad) screens[name].onLoad(data);
+    loadListeners.forEach(function (fn) { fn(data); });
   }
 
   function renderAll() {
@@ -286,6 +311,7 @@
     if (id === 'settings') return 'Account, history, favourites';
     if (!d) return '';
     if (id === 'live') return count(d.live.length) + ' channels';
+    if (d.vodLoading && (id === 'movies' || id === 'series')) return 'Loading…';
     if (id === 'movies') return d.movies.length ? count(d.movies.length) + ' movies' : 'None in this playlist';
     if (id === 'series') return d.series.length ? count(d.series.length) + ' series' : 'None in this playlist';
     return '';
@@ -347,6 +373,7 @@
     if (id === 'playlists' || id === 'settings') { go(id); return; }
     if (S.loading) { toast('Playlist is still loading'); return; }
     if (!S.data) { toast(S.loadError || 'Add a playlist first'); go('playlists'); return; }
+    if (S.data.vodLoading && (id === 'movies' || id === 'series')) { toast((id === 'movies' ? 'Movies' : 'Series') + ' are still loading'); return; }
     if (id === 'movies' && !S.data.movies.length) { toast('This playlist has no movies'); return; }
     if (id === 'series' && !S.data.series.length) { toast('This playlist has no series'); return; }
     if (id === 'live' && !S.data.live.length) { toast('This playlist has no live channels'); return; }

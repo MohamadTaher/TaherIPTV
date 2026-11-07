@@ -133,15 +133,26 @@ var Playlists = (function () {
     return login ? loadXtream(pl, login) : loadM3u(pl);
   }
 
+  // Resolves as soon as live channels are in, so the guide does not wait for movies and series, which
+  // are far bigger (6,800-channel account on the TV, 2026-11-07: live ready after 1.4 s, movies after 3.3 s).
+  // data.vodLoading stays true until data.vod resolves with movies and series filled in.
   function loadXtream(pl, login) {
     var x = Xtream.client(login);
     // The account call also picks the live stream format, so it goes first.
     return x.account().then(function (account) {
       // Movies and series are optional: some accounts are live-only.
       function soft(p) { return p.catch(function () { return []; }); }
-      return Promise.all([x.live(), soft(x.movies()), soft(x.series())]).then(function (r) {
-        return { playlist: pl, live: r[0], movies: r[1], series: r[2], account: account,
+      var movies = soft(x.movies()), series = soft(x.series());
+      return x.live().then(function (live) {
+        var data = { playlist: pl, live: live, movies: [], series: [], vodLoading: true, account: account,
           seriesInfo: x.seriesInfo, movieInfo: x.movieInfo };
+        data.vod = Promise.all([movies, series]).then(function (r) {
+          data.movies = r[0];
+          data.series = r[1];
+          data.vodLoading = false;
+          return data;
+        });
+        return data;
       });
     });
   }

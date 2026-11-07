@@ -97,11 +97,29 @@ var Library = (function () {
 
   function clearHistory(kind) { cache[key('hist', kind)] = []; save('hist', kind); }
 
+  // Renames saved ids (and urls) of one kind: fn(id) returns the new id, or null to keep it.
+  function rekey(kind, fn) {
+    var f = load('fav', kind), h = load('hist', kind), moved = false, id, to, i;
+    for (id in f) {
+      if (!f.hasOwnProperty(id) || !(to = fn(id))) continue;
+      f[to] = f[id]; f[to].id = to; if (f[to].url) f[to].url = to;
+      delete f[id]; moved = true;
+    }
+    if (moved) save('fav', kind);
+    moved = false;
+    for (i = 0; i < h.length; i++) {
+      if (!(to = fn(h[i].id))) continue;
+      h[i].id = to; if (h[i].url) h[i].url = to; moved = true;
+    }
+    if (moved) save('hist', kind);
+  }
+
   return {
     KINDS: KINDS,
     setOwner: function (id) { owner = String(id || 'default'); cache = {}; },
     owner: function () { return owner; },
     isFav: isFav, toggleFav: toggleFav, favs: favs, clearFavs: clearFavs,
-    record: record, history: history, entry: entry, forget: forget, clearHistory: clearHistory
+    record: record, history: history, entry: entry, forget: forget, clearHistory: clearHistory,
+    rekey: rekey
   };
 })();
