@@ -5,11 +5,16 @@ Repo: github.com/MohamadTaher/TaherIPTV.
 
 ## Layout
 
-- `app/` is the packaged app: `config.xml`, `index.html`, `css/style.css`, `js/m3u.js` (playlist parser),
-  `js/player.js` (AVPlay on the TV, `<video>` in a browser), `js/app.js` (UI and remote keys).
+- `app/` is the packaged app: `config.xml`, `index.html`, `css/`, and in `js/`:
+  `m3u.js` (playlist parser), `player.js` (AVPlay on the TV, `<video>` in a browser), `store.js` (storage,
+  favourites and watch history per playlist), `xtream.js` (Xtream Codes API), `sources.js` (saved playlists,
+  loading M3U or Xtream into live/movies/series), `app.js` (home, live guide, playlists, remote keys, and the
+  `App` API other screens register with), `vod.js` (movies and series), `settings.js` (settings tabs).
 - `deploy.ps1` packages, signs (profile `TaherTV`), installs and launches on the TV: `pwsh -File deploy.ps1`.
 - `tools/tvdebug.py` drives the app on the TV over the DevTools protocol.
 - `app/playlists/test.m3u` is the verified test playlist (preset "Test channels"); use it for real testing.
+- `tools/mock_xtream.py` is a fake Xtream server (`mock-xtream` in `.claude/launch.json`, port 8766, login
+  demo / demo) with live, movies, series and account data, for testing Xtream features in the browser.
 - App id `TaherIPTV0.TaherIPTV`. Do not rename it.
 
 ## Git workflow

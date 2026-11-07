@@ -5,15 +5,44 @@
 <meta name="viewport" content="width=1920, height=1080, user-scalable=no">
 <title>Taher IPTV</title>
 <link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/vod.css">
+<link rel="stylesheet" href="css/settings.css">
 <!-- Samsung TV APIs (AVPlay). Missing in a desktop browser; the app falls back to <video>. -->
 <script src="$WEBAPIS/webapis/webapis.js"></script>
 </head>
-<body>
+<body data-screen="home">
 
 <!-- Video sits under the page, always full screen. AVPlay draws on a plane behind the page. -->
 <object id="av-player" type="application/avplayer"></object>
 <video id="html-player" playsinline></video>
 
+<!-- ---------- home ---------- -->
+<div id="home" class="home">
+  <div class="home-head">
+    <div class="brand">
+      <span class="brand-mark"><svg viewBox="0 0 24 24" class="icon"><rect x="2.5" y="4" width="19" height="13" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 8.2v4.6l4-2.3z" fill="currentColor"/><path d="M8 20.5h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+      <span class="brand-name">Taher <b>IPTV</b></span>
+    </div>
+    <div class="home-status">
+      <div id="h-playlist" class="h-playlist"></div>
+      <div id="h-account" class="h-account"></div>
+    </div>
+    <div class="clock"><div id="h-time" class="h-time"></div><div id="h-date" class="h-date"></div></div>
+  </div>
+
+  <div id="h-hero" class="home-hero"></div>
+
+  <div id="tiles" class="tiles"></div>
+
+  <div class="legend home-legend">
+    <span><kbd>◀ ▶</kbd>Move</span>
+    <span><kbd>OK</kbd>Open</span>
+    <span><i class="dot blue"></i>Playlists</span>
+    <span><kbd>BACK</kbd>Exit</span>
+  </div>
+</div>
+
+<!-- ---------- live TV guide ---------- -->
 <div id="guide" class="guide">
   <div class="scrim"></div>
 
@@ -86,11 +115,17 @@
 
 <div id="numbox" class="numbox"></div>
 
-<div id="settings" class="modal">
+<!-- ---------- screens filled by their modules (js/vod.js, js/settings.js) ---------- -->
+<div id="vod" class="screen"></div>
+<div id="settings" class="screen"></div>
+
+<!-- ---------- playlists ---------- -->
+<div id="playlists" class="modal">
   <div class="sheet">
-    <h2>Playlists</h2>
-    <div id="set-current" class="set-current"></div>
-    <div id="set-items"></div>
+    <h2 id="pl-title">Playlists</h2>
+    <div id="pl-sub" class="set-current"></div>
+    <div id="pl-items"></div>
+    <div id="pl-hint" class="pl-hint"></div>
   </div>
 </div>
 
@@ -98,6 +133,11 @@
 
 <script src="js/m3u.js"></script>
 <script src="js/player.js"></script>
+<script src="js/store.js"></script>
+<script src="js/xtream.js"></script>
+<script src="js/sources.js"></script>
 <script src="js/app.js"></script>
+<script src="js/vod.js"></script>
+<script src="js/settings.js"></script>
 </body>
 </html>

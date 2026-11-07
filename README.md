@@ -2,18 +2,20 @@
 
 An IPTV player for Samsung Tizen TVs, built as a Tizen web app (1920x1080, remote-only).
 
-- Channel guide with categories, search, favourites and sorting.
+- Home screen with Live TV, Movies, Series, Playlists and Settings.
+- Channel guide with categories, search, favourites, recently watched and sorting.
 - Full-screen player on Samsung AVPlay, with near-instant channel switching through pre-buffering.
-- Loads any M3U playlist link; includes presets for public free-to-air playlists and a verified test playlist.
+- Saved playlists: M3U links and Xtream Codes logins (account status and expiry shown on the home screen);
+  includes presets for public free-to-air playlists and a verified test playlist.
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `app/` | The packaged app: `config.xml`, `index.html`, `css/`, `js/` (`m3u.js` parser, `player.js` AVPlay, `app.js` UI) |
+| `app/` | The packaged app: `config.xml`, `index.html`, `css/`, `js/` (see [CLAUDE.md](CLAUDE.md) for each file) |
 | `app/playlists/test.m3u` | Test channels probed from the home network |
 | `deploy.ps1` | Packages, signs, installs and launches on the TV |
-| `tools/` | `webcheck.py` (headless Chrome at TV size) and `tvdebug.py` (drives the app on the TV) |
+| `tools/` | `webcheck.py` (headless Chrome at TV size), `tvdebug.py` (drives the app on the TV), `mock_xtream.py` (fake Xtream server, login demo / demo) |
 
 ## Run
 
