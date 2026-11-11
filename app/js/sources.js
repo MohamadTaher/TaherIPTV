@@ -137,6 +137,8 @@ var Playlists = (function () {
     var x = Xtream.client(login);
     // The account call also picks the live stream format, so it goes first.
     return x.account().then(function (account) {
+      // One connection allowed: the player pre-buffers by taking turns instead of opening streams side by side.
+      if (account.maxConn === 1) Player.oneConnection(x.server);
       // Movies and series are optional: some accounts are live-only.
       function soft(p) { return p.catch(function () { return []; }); }
       var movies = soft(x.movies()), series = soft(x.series());

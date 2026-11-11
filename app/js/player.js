@@ -11,7 +11,14 @@
    - some streams never finish preparing; a player can end up broken (its state reads wrong and
      every prepare hangs), so a player that hangs twice in a row, or refuses to open, is retired;
    - a failed pre-buffer is retried, PRE_TRIES times in all, then that stream is skipped;
-   - hosts that refuse a second connection (common for paid IPTV accounts) get normal starts only.
+   - hosts that allow one connection (common for paid IPTV accounts) pre-buffer by taking turns.
+
+   Taking turns (one-connection hosts): the provider's own app showed (2026-11-11) that the server sends a
+   few seconds of recent video the moment a connection opens, and keeps only the newest connection. So
+   pre-buffers open one at a time; each takes the connection, and the players it cut keep what they have
+   buffered. The watched channel plays from its buffer meanwhile, then rejoins: the same channel is opened
+   again in a spare player and the picture swaps to it, so the live connection ends up on the watched
+   channel. A switch to a pre-buffered channel shows its buffered video at once and rejoins the same way.
 
    Movies and episodes (js/vod.js) add play(url, ua, startMs) to resume, plus seek, pause, resume and paused. */
 var Player = (function () {
@@ -33,6 +40,13 @@ var Player = (function () {
   var PRE_MAX = 3;            // pre-buffered channels kept at once (the 4th player is the active one)
   var PRE_MAX_AGE_MS = 60000; // live pre-buffers go stale; reopen after this
   var CONFLICT_MS = 15000;    // active stream failing this soon after a pre-buffer on its host = one-connection host
+  var SHARE_MAX = 2;          // channels pre-buffered on a one-connection host (one player is kept for rejoining)
+  var SHARE_ROUND_MS = 3000;  // the watched channel lost the connection this long ago: start no more pre-buffers, rejoin
+  var SHARE_AGE_MS = 120000;  // buffered video this old is not worth showing; dropped, not fetched again
+  var SHARE_FAILS = 2;        // taking turns failed this often on a host: given up there until the app restarts
+  var STALL_MS = 700;         // a cut channel buffering this long has run out of buffered video
+  var REJOIN_TRIES = 2;       // rejoin attempts before the channel is simply started again
+  var SWAP_MS = 1500;         // a rejoin swap keeps the old player on screen at most this long
   var RECT = [0, 0, 1920, 1080];
   var ASPECTS = { fit: 'PLAYER_DISPLAY_MODE_LETTER_BOX', fill: 'PLAYER_DISPLAY_MODE_FULL_SCREEN' };
 
@@ -47,9 +61,16 @@ var Player = (function () {
   var preFails = {};      // url -> failed pre-buffer attempts (this session)
   var lastWant = [];      // last preload() request, for retries
   var retryTimer = 0;
+  var shareFails = {};    // host -> times taking turns failed (this session)
+  var conflictAt = {};    // host -> when it was found to allow one connection
+  var roundDone = '';     // the pre-buffer request last served on the watched channel's host; not served twice
+  var lastSwap = null;    // { ms, frames } of the last rejoin swap, for info()
 
-  // Pool entries: { p, role: 'free'|'active'|'pre', broken, url, ready, failed, started, opened, claim }
+  // Pool entries: { p, role: 'free'|'active'|'pre', broken, url, ready, failed, started, opened, claim,
+  //                 cut, cutAt, dry, rejoin, swapped }
   // claim = token of a switch waiting for this pre-buffer to finish.
+  // cut = a later open on its one-connection host took the connection; it plays out what it has buffered.
+  // dry = that buffer ran out. rejoin = a pre-buffer of the watched channel itself. swapped = it took over.
   var pool = [];
   var active = null;
   var storeOk = null;     // null = untested
@@ -64,6 +85,7 @@ var Player = (function () {
   function markSingle(h) {
     if (!h || singleHosts[h]) return;
     singleHosts[h] = true;
+    conflictAt[h] = Date.now();
     try { localStorage.setItem('tiptv.singleHosts', JSON.stringify(singleHosts)); } catch (e) { /* storage unavailable */ }
     pool.forEach(function (e) { if (e.role === 'pre' && !claimed(e) && host(e.url) === h) release(e); });
   }
@@ -109,6 +131,8 @@ var Player = (function () {
     if (e === active) active = null;
     e.role = 'free'; e.url = ''; e.ready = false; e.failed = false; e.started = false;
     e.onReady = null; e.opened = 0; e.claim = 0;
+    clearTimeout(e.stall);
+    e.cut = false; e.cutAt = 0; e.dry = false; e.rejoin = false; e.swapped = false; e.rejoins = 0;
   }
 
   // Only the current switch's claim counts; a superseded one frees the pre-buffer again.
@@ -135,7 +159,10 @@ var Player = (function () {
     e.role = role; e.url = url; e.ready = false; e.failed = false; e.started = false;
     e.opened = Date.now(); e.onReady = null; e.claim = 0;
     e.bitrate = 0; e.switched = false;
+    clearTimeout(e.stall);
+    e.cut = false; e.cutAt = 0; e.dry = false; e.rejoin = false; e.swapped = false; e.rejoins = 0;
     p.open(url);
+    try { p.setVideoStillMode('false'); } catch (err) { /* optional */ }
     if (ua) { try { p.setStreamingProperty('USER_AGENT', ua); } catch (err) { /* optional */ } }
     // UHD mode, set between open and prepare. Single-quality 4K streams play at 3840x2160 without it
     // (tested on the TV 2026-11-07); Samsung's docs require it for adaptive streams to pick UHD variants.
@@ -143,10 +170,18 @@ var Player = (function () {
     try { p.setBufferingParam('PLAYER_BUFFER_FOR_PLAY', 'PLAYER_BUFFER_SIZE_IN_SECOND', START_BUFFER_S); } catch (err) { /* optional */ }
     p.setListener({
       // Buffering before the first frame is part of 'loading'; only stalls after it are shown.
-      onbufferingstart: function () { if (e.started) emitFor(e, 'buffering'); },
+      onbufferingstart: function () {
+        if (!e.started) return;
+        // A cut channel that keeps buffering has played out what it had.
+        if (e.cut) { clearTimeout(e.stall); e.stall = setTimeout(function () { drained(e); }, STALL_MS); }
+        emitFor(e, 'buffering');
+      },
       onbufferingprogress: function () {},
-      onbufferingcomplete: function () { if (e.started) emitFor(e, 'playing'); },
-      onstreamcompleted: function () { emitFor(e, 'ended'); },
+      onbufferingcomplete: function () { clearTimeout(e.stall); if (e.started) emitFor(e, 'playing'); },
+      onstreamcompleted: function () {
+        if (e.cut) { drained(e); return; }   // expected: the server closed it when a later open took the connection
+        if (!lostTurn(e)) emitFor(e, 'ended');
+      },
       oncurrentplaytime: function () {},
       // Adaptive streams switch quality as bandwidth changes; remember the bitrate for info().
       onevent: function (type, data) {
@@ -160,7 +195,7 @@ var Player = (function () {
     p.setDisplayRect(RECT[0], RECT[1], RECT[2], RECT[3]);
     p.setDisplayMethod(ASPECTS[aspect]);
     if (role === 'pre') p.setStreamingProperty('PREBUFFER_MODE', '0');
-    var opened = e.opened;
+    var opened = e.opened, shared = !!singleHosts[host(url)];
     setTimeout(function () {
       if (e.opened !== opened || e.ready || e.failed) return;
       hung(e);
@@ -170,16 +205,133 @@ var Player = (function () {
       e.ready = true;
       e.hangs = 0;
       if (e.onReady) { var f = e.onReady; e.onReady = null; f(); }
+      if (shared) setTimeout(shareStep, 0);   // its turn is over: the next pre-buffer, or the rejoin
     }, function (err) {
       if (e.opened !== opened) return;
       failed(e, String(err));
     });
+    takeTurn(e);
+  }
+
+  /* ---------- taking turns on a one-connection host ---------- */
+
+  // Opening e took the connection from every other player on its host.
+  function takeTurn(e) {
+    var h = host(e.url);
+    if (!singleHosts[h]) return;
+    pool.forEach(function (x) {
+      if (x === e || x.cut || !x.url || host(x.url) !== h) return;
+      x.cut = true;
+      x.cutAt = Date.now();
+    });
+    if (active && active !== e && active.cut) setTimeout(shareStep, SHARE_ROUND_MS + 50);
+  }
+
+  // Channels to keep pre-buffered now, most likely first.
+  function wanted() {
+    var want = [], shared = 0;
+    lastWant.forEach(function (c) {
+      if (!c || !c.url || want.length >= PRE_MAX || (preFails[c.url] || 0) >= PRE_TRIES || (active && active.url === c.url)) return;
+      var h = host(c.url);
+      if (singleHosts[h]) {
+        if ((shareFails[h] || 0) >= SHARE_FAILS || shared >= SHARE_MAX) return;
+        shared++;
+      }
+      want.push(c);
+    });
+    return want;
+  }
+
+  // One step of taking turns: open the next wanted pre-buffer on a one-connection host, one at a time,
+  // or, once the watched channel has been without its connection long enough, let it rejoin.
+  // Runs after every request, every finished pre-buffer and on timers.
+  function shareStep() {
+    if (!native || storeOk === false) return;
+    var a = active, ah = a && a.url ? host(a.url) : '';
+    if (a && singleHosts[ah] && !a.started) return;   // the channel being started keeps the connection
+    var busy = {}, rejoining = false;
+    pool.forEach(function (e) {
+      if (e.role !== 'pre' || !e.url) return;
+      if (!e.ready && !e.failed) busy[host(e.url)] = true;
+      if (e.rejoin) rejoining = true;
+    });
+    var want = preloadOn ? wanted().filter(function (c) { return singleHosts[host(c.url)]; }) : [];
+    var key = token + '|' + want.map(function (c) { return c.url; }).join('|');
+    var closed = !!a && a.cut && (a.dry || Date.now() - a.cutAt > SHARE_ROUND_MS);
+    want.forEach(function (c) {
+      var h = host(c.url);
+      if (busy[h] || preFor(c.url)) return;
+      if (h === ah && (closed || rejoining || key === roundDone)) return;
+      var e = freeEntry(true);
+      if (!e || storeOk !== true || e.role !== 'free') return;
+      e.ua = c.ua;
+      try { openOn(e, c.url, c.ua, 'pre'); busy[h] = true; } catch (err) { retire(e); }
+    });
+    if (a && a.cut && !busy[ah] && !rejoining) {
+      roundDone = key;
+      rejoin(a);
+    }
+  }
+
+  // The watched channel lost its connection to a pre-buffer: open it again in a spare player and swap
+  // to that one when it is ready. The new connection is the newest, so it is the one the server keeps.
+  function rejoin(a) {
+    a.rejoins = (a.rejoins || 0) + 1;
+    var e = a.rejoins > REJOIN_TRIES ? null : (freeEntry(true) || freeEntry());
+    if (e && e !== a && storeOk === true && e.role === 'free') {
+      e.ua = a.ua;
+      try {
+        openOn(e, a.url, a.ua, 'pre');
+        e.rejoin = true;
+        e.onReady = function () {
+          if (active !== a) { release(e); shareStep(); return; }   // the user moved on meanwhile
+          e.swapped = true;
+          promote(token, e);
+        };
+        return;
+      } catch (err) { retire(e); }
+    }
+    startCold(token, a.url, a.ua, true);
+  }
+
+  // The watched channel played out its buffer before it could rejoin.
+  function drained(e) {
+    if (e !== active || e.dry) return;
+    e.dry = true;
+    emitFor(e, 'buffering');
+    shareStep();
+    var my = token;
+    setTimeout(function () { if (my === token && active === e && e.dry) startCold(my, e.url, e.ua, true); }, PRE_READY_MS);
+  }
+
+  // The watched channel died although it should hold the connection, so taking turns does not work as
+  // assumed on this host (some servers cut the newest connection instead). Count it, drop the
+  // pre-buffers there and start the channel again on its own.
+  function lostTurn(e) {
+    var h = host(e.url);
+    if (e !== active || e.tok !== token || !singleHosts[h] || e.retried) return false;
+    var fresh = !!conflictAt[h] && Date.now() - conflictAt[h] < 2 * CONFLICT_MS;   // the host was only just found out
+    var shared = e.swapped || fresh;
+    pool.forEach(function (x) { if (x !== e && x.url && host(x.url) === h) shared = true; });
+    if (!shared) return false;
+    if (!fresh) shareFails[h] = (shareFails[h] || 0) + 1;
+    pool.forEach(function (x) { if (x.role === 'pre' && !claimed(x) && host(x.url) === h) release(x); });
+    startCold(token, e.url, e.ua, true);
+    return true;
+  }
+
+  // A pre-buffer that lost the connection before it was ready has nothing to show.
+  function dropCut(e) {
+    var url = e.url, ua = e.ua, c = e.claim;
+    release(e);
+    if (c === token) startCold(c, url, ua);
+    else setTimeout(shareStep, 0);
   }
 
   // A pre-buffer failed: count it, fall back if a switch was waiting on it, retry shortly.
   function preFailed(e, retirePlayer) {
     var url = e.url, ua = e.ua, claim = e.claim;
-    preFails[url] = (preFails[url] || 0) + 1;
+    if (!e.rejoin) preFails[url] = (preFails[url] || 0) + 1;
     if (retirePlayer) retire(e); else release(e);
     if (claim === token) startCold(claim, url, ua);
     clearTimeout(retryTimer);
@@ -188,6 +340,7 @@ var Player = (function () {
 
   // prepareAsync never answered. A player that hangs twice in a row is retired.
   function hung(e) {
+    if (e.cut && e.role === 'pre') { dropCut(e); return; }
     e.hangs = (e.hangs || 0) + 1;
     var bad = e.hangs >= 2;
     if (e.role === 'pre') { preFailed(e, bad); return; }
@@ -197,6 +350,11 @@ var Player = (function () {
   }
 
   function failed(e, msg) {
+    if (e.cut) {   // expected: a later open on its one-connection host took the connection
+      if (e === active) drained(e);
+      else if (e.role === 'pre' && !e.ready) dropCut(e);
+      return;      // a ready pre-buffer keeps what it buffered
+    }
     e.failed = true;
     if (e.role === 'pre') {
       // A second connection refused while this host is already playing points to a one-connection account.
@@ -205,6 +363,7 @@ var Player = (function () {
       return;
     }
     if (e !== active) return;
+    if (lostTurn(e)) return;
     // The active stream died right after we opened a pre-buffer on the same host: the host
     // probably dropped it for the extra connection. Mark the host and restart this channel once.
     var h = host(e.url), recent = false;
@@ -229,7 +388,11 @@ var Player = (function () {
         e.p.play();
         e.started = true;
         emitFor(e, 'playing');
-      } catch (err) { emitFor(e, 'error', err.message || String(err)); }
+      } catch (err) {
+        // A cut pre-buffer that will not play its buffered video: start the channel normally.
+        if (e.cut && e.tok === token) startCold(token, e.url, e.ua, true);
+        else emitFor(e, 'error', err.message || String(err));
+      }
     }
     if (at > 0) {   // resume: seek while ready, then play
       try { e.p.seekTo(at, start, start); setTimeout(start, SEEK_WAIT_MS); return; } catch (err) { /* start from the beginning */ }
@@ -263,11 +426,34 @@ var Player = (function () {
 
   // A ready pre-buffer: start it first, then close the old one (Samsung's documented order).
   function promote(my, e) {
-    var old = active;
-    active = e; e.role = 'active'; e.tok = my; e.retried = false; e.claim = 0;
+    var old = active, same = !!old && old !== e && old.url === e.url;
+    active = e; e.role = 'active'; e.tok = my; e.retried = false; e.claim = 0; e.rejoin = false;
+    // A pre-buffer that was cut plays what it buffered; it rejoins after the next pre-buffers had their turn.
+    if (e.cut) { e.cutAt = Date.now(); setTimeout(shareStep, SHARE_ROUND_MS + 50); }
     try { e.p.setDisplayMethod(ASPECTS[aspect]); } catch (err) { /* keep going */ }
+    // Same channel in a new player (a rejoin): the old one holds its last frame when it stops.
+    if (same) { try { old.p.setVideoStillMode('true'); } catch (err) { /* optional */ } }
     begin(e);
-    if (old && old !== e) setTimeout(function () { if (old !== active) release(old); }, 0);
+    if (same) handOver(old, e);
+    else if (old && old !== e) setTimeout(function () { if (old !== active) release(old); }, 0);
+  }
+
+  // A rejoin swap: the old player stays on screen until the new one is showing frames (its clock moves),
+  // so there is no black gap between them. Closing the old one at once, as a channel change does, flickers.
+  function handOver(old, e) {
+    var t0 = Date.now(), first = -1, frames = false;
+    (function poll() {
+      var done = e !== active || Date.now() - t0 > SWAP_MS;
+      if (!done) {
+        try {
+          var t = e.p.getCurrentTime();
+          if (first < 0) first = t; else if (t > first) { done = true; frames = true; }
+        } catch (err) { done = true; }
+      }
+      if (!done) { setTimeout(poll, 40); return; }
+      lastSwap = { ms: Date.now() - t0, frames: frames };
+      if (old !== active) release(old);
+    })();
   }
 
   // A pre-buffer still in progress: it is already connected, so wait for it a little.
@@ -325,6 +511,7 @@ var Player = (function () {
   function stop() {
     token++;
     startAt = 0;
+    roundDone = '';
     clearTimeout(pending);
     if (native) pool.forEach(release);
     else { vid.pause(); vid.removeAttribute('src'); vid.load(); }
@@ -366,29 +553,34 @@ var Player = (function () {
   function preload(list) {
     lastWant = list || [];
     if (!native || !preloadOn || storeOk === false) return;
-    var want = [];
-    lastWant.forEach(function (c) {
-      if (c && c.url && want.length < PRE_MAX && (preFails[c.url] || 0) < PRE_TRIES && !singleHosts[host(c.url)] &&
-          !(active && active.url === c.url)) want.push(c);
-    });
+    var want = wanted();
     var urls = want.map(function (c) { return c.url; });
     pool.forEach(function (e) {
       if (e.role !== 'pre' || claimed(e)) return;
-      var stale = Date.now() - e.opened > PRE_MAX_AGE_MS;
+      if (e.rejoin && active && active.url === e.url) return;
+      var shared = !!singleHosts[host(e.url)];
+      var stale = Date.now() - e.opened > (shared ? SHARE_AGE_MS : PRE_MAX_AGE_MS);
       if (urls.indexOf(e.url) === -1 || stale) release(e);
     });
     want.forEach(function (c) {
-      if (preFor(c.url)) return;
+      if (singleHosts[host(c.url)] || preFor(c.url)) return;   // one-connection hosts take turns, see shareStep
       var e = freeEntry(true);
       if (!e || storeOk !== true || e.role !== 'free') return;   // without AVPlayStore the only player is the active one
       e.ua = c.ua;
       try { openOn(e, c.url, c.ua, 'pre'); } catch (err) { retire(e); }
     });
+    shareStep();
   }
 
   function setPreload(on) {
     preloadOn = !!on;
-    if (!preloadOn) pool.forEach(function (e) { if (e.role === 'pre' && !claimed(e)) release(e); });
+    if (!preloadOn) pool.forEach(function (e) { if (e.role === 'pre' && !claimed(e) && !e.rejoin) release(e); });
+  }
+
+  // The account says it allows one connection (Xtream max_connections), so there is no need to find out by failing.
+  function oneConnection(server) {
+    var h = host(server);
+    if (h && !singleHosts[h]) { markSingle(h); conflictAt[h] = 0; }
   }
 
   function setAspect(mode) {
@@ -409,7 +601,13 @@ var Player = (function () {
       return out;
     }
     out.preFails = preFails;
-    out.pool = pool.map(function (e) { return (e.broken ? 'X ' : '') + e.role + (e.ready ? '+' : '') + (e.url ? ' ' + host(e.url) : ''); });
+    // '+' ready, '~' cut (plays what it buffered), '!' ran dry, 'R' rejoining; the last path part tells channels apart.
+    out.pool = pool.map(function (e) {
+      return (e.broken ? 'X ' : '') + e.role + (e.ready ? '+' : '') + (e.cut ? '~' : '') + (e.dry ? '!' : '') + (e.rejoin ? 'R' : '') +
+        (e.url ? ' ' + host(e.url) + ' ' + e.url.slice(e.url.lastIndexOf('/') + 1) : '');
+    });
+    out.shareFails = shareFails;
+    out.swap = lastSwap;
     var av = active && active.p;
     if (!av) { out.state = 'NONE'; return out; }
     try { out.state = av.getState(); } catch (e) { out.state = 'ERR ' + e.message; }
@@ -484,6 +682,7 @@ var Player = (function () {
     paused: paused,
     preload: preload,
     setPreload: setPreload,
+    oneConnection: oneConnection,
     isPreloaded: function (url) { var e = native && preFor(url); return !!(e && e.ready); },
     isPreloading: function (url) { return !!(native && preFor(url)); },
     info: info,
