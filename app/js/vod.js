@@ -594,7 +594,7 @@
   function detailKey(e, k) {
     e.preventDefault();
     var series = D.kind === 'series', btns = buttons(), eps = curEps();
-    if (k === KEY.BACK) { backToBrowse(); return; }
+    if (k === KEY.BACK) { if (D.from === 'home') App.go('home'); else backToBrowse(); return; }
     if (k === KEY.RED) { toggleFavItem(D.kind, D.item); renderDetail(false); return; }
     if (k === KEY.BLUE) { App.go('playlists'); return; }
     if (!series) {
@@ -887,6 +887,27 @@
       }
     };
   }
+
+  // For the home screen: movies and series to resume, most recent first, as { kind, it, h }.
+  App.vodContinue = function () {
+    if (!App.data()) return [];
+    var out = [];
+    ['movie', 'series'].forEach(function (kind) {
+      var by = lookups(kind).byId;
+      Library.history(kind).forEach(function (h) { if (by[h.id] && isCont(kind, h)) out.push({ kind: kind, it: by[h.id], h: h }); });
+    });
+    out.sort(function (a, b) { return (b.h.at || 0) - (a.h.at || 0); });
+    return out.slice(0, 30);
+  };
+
+  // Opens a title's detail page from the home screen; BACK there returns home.
+  App.openTitle = function (kind, it) {
+    var name = kind === 'movie' ? 'movies' : 'series';
+    App.go(name);
+    if (App.current() !== name) return;
+    openDetail(it);
+    D.from = 'home';
+  };
 
   App.register('movies', makeScreen('movie', 'movies'));
   App.register('series', makeScreen('series', 'series'));
