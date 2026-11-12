@@ -10,11 +10,17 @@ Repo: github.com/MohamadTaher/TaherIPTV.
   favourites and watch history per playlist), `xtream.js` (Xtream Codes API), `sources.js` (saved playlists,
   loading M3U or Xtream into live/movies/series), `app.js` (home, live guide, playlists, remote keys, and the
   `App` API other screens register with), `vod.js` (movies and series), `settings.js` (settings tabs).
+- `app/service/relay.js` is a background service (Node, declared in `config.xml` as `TaherIPTV0.Relay`): a local
+  web server on 127.0.0.1:18769 that holds the single connection of a one-connection account and gives each
+  player its own stream, splicing reconnects. `player.js` starts it and falls back to taking turns without it.
+  Bump `VERSION` there and `RELAY_VERSION` in `player.js` together.
 - `deploy.ps1` packages, signs (profile `TaherTV`), installs and launches on the TV: `pwsh -File deploy.ps1`.
 - `tools/tvdebug.py` drives the app on the TV over the DevTools protocol.
 - `app/playlists/test.m3u` is the verified test playlist (preset "Test channels"); use it for real testing.
 - `tools/mock_xtream.py` is a fake Xtream server (`mock-xtream` in `.claude/launch.json`, port 8766, login
   demo / demo) with live, movies, series and account data, for testing Xtream features in the browser.
+- `node tools/playersim.js` and `node tools/relaysim.js` test the player's pre-buffer logic and the relay on
+  this PC against a fake TV player and a fake one-connection server. Run both after touching either file.
 - App id `TaherIPTV0.TaherIPTV`. Do not rename it.
 
 ## Git workflow
