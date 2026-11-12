@@ -14,10 +14,11 @@
    - hosts that allow one connection (common for paid IPTV accounts) pre-buffer by taking turns.
 
    The relay (one-connection hosts, MPEG-TS): a background service (service/relay.js) holds the single
-   connection and gives every player its own unbroken stream on 127.0.0.1, so here these hosts pre-buffer
-   like any other, with no swap. The players only tell the relay which of them is on screen. Pre-buffers
-   are renewed every RELAY_AGE_MS because the relay can continue a fetch without a skip for about 10 s,
-   and only for RELAY_IDLE_MS after the last channel change: each fetch borrows the watched channel's connection.
+   connection and gives every player its own stream on 127.0.0.1, so here these hosts pre-buffer like any
+   other, with no swap. A pre-buffer holds a preview: the channel's first seconds, kept however old.
+   Changing channel shows the preview at once; in the next few seconds the relay fetches one new
+   neighbour and then connects the channel for good, cutting over to live video if it has to. After that
+   the channel is left alone, so neighbours can only be asked for right after a change (relayLend).
    Taking turns, below, is the fallback when the relay is not running or the stream is not MPEG-TS.
 
    Taking turns (one-connection hosts): the provider's own app showed (2026-11-11) that the server sends a
@@ -55,16 +56,11 @@ var Player = (function () {
   var REJOIN_TRIES = 2;       // rejoin attempts before the channel is simply started again
   var SWAP_MS = 1500;         // a rejoin swap keeps the old player on screen at most this long
   var RELAY = 'http://127.0.0.1:18769';   // service/relay.js
-  var RELAY_VERSION = 4;      // must match VERSION there; an older relay still running is stopped
+  var RELAY_VERSION = 5;      // must match VERSION there; an older relay still running is stopped
   var RELAY_APP = 'TaherIPTV0.Relay';
-  var RELAY_PRE = 2;          // pre-buffers through the relay; the 4th player is spare for renewing them
-  var RELAY_AGE_MS = 6000;    // a relay pre-buffer is renewed at this age...
-  var RELAY_VALID_MS = 10000; // ...because past this age the relay could not continue it without a skip: it is not used
-  var RELAY_DROP_MS = 12000;  // and it is dropped at this age if it could not be renewed
+  var RELAY_PRE = 3;          // previews kept through the relay
+  var RELAY_STALE_MS = 300000; // a preview older than this is dropped: the channel then starts afresh
   var RELAY_READY_MS = 15000; // the relay may make a pre-buffer wait for the connection, so allow longer than PRE_READY_MS
-  var RELAY_IDLE_MS = 30000;  // no channel change or browsing for this long: stop renewing. Every fetch borrows the
-                              // watched channel's connection, and the reconnect is only seamless when the provider
-                              // sends us back to the same stream server.
   var RELAY_TICK_MS = 2000;   // how often the relay is asked whether it can fetch, and pre-buffers are renewed
   var RECT = [0, 0, 1920, 1080];
   var ASPECTS = { fit: 'PLAYER_DISPLAY_MODE_LETTER_BOX', fill: 'PLAYER_DISPLAY_MODE_FULL_SCREEN' };
@@ -86,10 +82,9 @@ var Player = (function () {
   var lastSwap = null;    // { ms, frames } of the last rejoin swap, for info()
   var instant = true;     // pre-buffer on one-connection hosts (setInstant); off: plain starts, nothing borrowed
   var relayOk = false;    // the relay answered with our version
-  var relayLend = false;  // the relay can fetch a pre-buffer now without starving the watched channel
+  var relayLend = false;  // the relay would fetch a neighbour now (only right after a channel change)
   var relayTries = 0;
   var cidSeq = Date.now() % 1000000000;   // client ids for the relay; it may outlive this page
-  var lastAsk = 0;        // when the app last asked for pre-buffers
   var dbgLog = [];        // recent player events, for info()
 
   function dbg(s) { dbgLog.push(((Date.now() % 1000000) / 1000).toFixed(1) + ' ' + s); if (dbgLog.length > 60) dbgLog.shift(); }
@@ -220,17 +215,10 @@ var Player = (function () {
     setTimeout(relayTick, RELAY_TICK_MS);
   }
 
-  // Renews relay pre-buffers while the app is in use; after RELAY_IDLE_MS without a request they are dropped.
-  // Pre-buffers are only opened when the relay says it can fetch now: a player left waiting for data that
-  // does not come is a player that hangs.
+  // Asks the relay whether it would fetch a neighbour now, and opens a missing preview if so.
   function relayTick() {
     setTimeout(relayTick, RELAY_TICK_MS);
     if (!lastWant.length) return;
-    if (Date.now() - lastAsk > RELAY_IDLE_MS) {
-      lastWant = [];
-      pool.forEach(function (e) { if (e.role === 'pre' && e.relay && !claimed(e)) release(e); });
-      return;
-    }
     relayGet('/ping', function (text) {
       try { relayLend = !!JSON.parse(text).lend; } catch (e) { relayLend = false; }
       refresh();
@@ -504,7 +492,8 @@ var Player = (function () {
       try {
         e.p.play();
         e.started = true;
-        if (e.relay) relayGet('/play?c=' + e.cid);
+        // The relay now fetches one neighbour before it connects this channel for good: ask for it at once.
+        if (e.relay) { relayGet('/play?c=' + e.cid); relayLend = true; setTimeout(refresh, 0); }
         emitFor(e, 'playing');
       } catch (err) {
         // A cut pre-buffer that will not play its buffered video: start the channel normally.
@@ -595,9 +584,7 @@ var Player = (function () {
 
   function playAv(my, url, ua) {
     var e = preFor(url);
-    // A relay pre-buffer that is too old would play stale video and then skip: start the channel afresh instead.
-    var stale = !!e && e.relay && Date.now() - e.opened > RELAY_VALID_MS;
-    if (e && e.ready && !stale) promote(my, e);
+    if (e && e.ready) promote(my, e);
     else if (e && !e.relay) claim(my, e);
     else startCold(my, url, ua);   // a relay pre-buffer that is not ready: the relay keeps what it has fetched for it
   }
@@ -681,7 +668,6 @@ var Player = (function () {
   // Keep these channels pre-buffered ([{url, ua}], most likely first) and drop the rest.
   function preload(list) {
     lastWant = list || [];
-    lastAsk = Date.now();
     refresh();
   }
 
@@ -695,11 +681,7 @@ var Player = (function () {
       if (e.rejoin && active && active.url === e.url) return;
       var age = Date.now() - e.opened;
       if (urls.indexOf(e.url) === -1) { release(e); return; }
-      if (e.relay) {
-        if (age > RELAY_DROP_MS) release(e);
-        else if (age > RELAY_AGE_MS && e.ready && relayLend) { renew(e); relayLend = false; }
-        return;
-      }
+      if (e.relay) { if (age > RELAY_STALE_MS) release(e); return; }
       if (age > (shares(e.url) ? SHARE_AGE_MS : PRE_MAX_AGE_MS)) release(e);
     });
     want.forEach(function (c) {
@@ -711,20 +693,6 @@ var Player = (function () {
       try { openOn(e, c.url, c.ua, 'pre'); } catch (err) { dbg('open threw: ' + (err && (err.name + ' ' + err.message))); retire(e); }
     });
     shareStep();
-  }
-
-  // A relay pre-buffer is getting old: open a new one beside it and drop the old one when the new one is
-  // ready, so the channel is never without a pre-buffer. Without a spare player the old one goes first.
-  function renew(old) {
-    var other = false;
-    pool.forEach(function (x) { if (x !== old && x.role === 'pre' && x.url === old.url) other = true; });
-    if (other) return;   // already being renewed
-    var e = freeEntry(true);
-    if (!e || storeOk !== true || e.role !== 'free') { release(old); return; }
-    try {
-      openOn(e, old.url, old.ua, 'pre');
-      e.onReady = function () { if (old.role === 'pre' && old.url === e.url && !claimed(old)) release(old); };
-    } catch (err) { dbg('open threw: ' + (err && (err.name + ' ' + err.message))); retire(e); }
   }
 
   function setPreload(on) {
