@@ -283,6 +283,16 @@
       right = kv('Host', pl.type === 'demo' ? '—' : /^https?:/i.test(pl.url) ? esc(hostOf(pl.url)) : 'Bundled with the app');
       note = '<div class="st-note" style="margin:16px 0 0">Plain M3U links carry no account details such as expiry or connections.</div>';
     }
+    // One-connection accounts: instant channel change borrows the connection, which can make the picture skip.
+    if (a && a.maxConn === 1) {
+      var on = Store.get('instant', true);
+      note = row(ctx, 'Instant channel change', '<span class="st-pill' + (on ? ' on' : '') + '">' + (on ? 'On' : 'Off') + '</span>', function () {
+        Store.set('instant', Player.setInstant(!Store.get('instant', true)));
+        render();
+      }) + '<div class="st-note" style="margin:0 0 6px">This account allows one connection. On: the next channels are fetched ahead ' +
+        'by borrowing it, so changing channel is often instant, but the picture may skip or repeat a few seconds shortly after a change. ' +
+        'Off: every change takes 2 to 3 seconds and the picture is never disturbed.</div>';
+    }
     return '<div class="st-grid"><div>' + left + '</div><div>' + right + '</div></div>' + note +
       '<div class="st-stats">' +
       stat(App.count(d.live.length), 'Live channels') + stat(App.count(d.movies.length), 'Movies') +

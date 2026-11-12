@@ -72,6 +72,7 @@
     state: 'idle', stateDetail: '',
     sort: Store.get('sort', 'num'),
     aspect: Player.setAspect(Store.get('aspect', 'fit')),
+    instant: Player.setInstant(Store.get('instant', true)),
     query: '',
     loading: false,
     tile: 0,
