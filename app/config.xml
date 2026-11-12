@@ -8,6 +8,14 @@
     <tizen:profile name="tv-samsung"/>
     <tizen:privilege name="http://tizen.org/privilege/internet"/>
     <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice"/>
+    <tizen:privilege name="http://tizen.org/privilege/application.launch"/>
     <tizen:setting screen-orientation="landscape" context-menu="disable" background-support="disable" encryption="disable" install-location="auto" hwkey-event="enable"/>
     <access origin="*" subdomains="true"/>
+    <tizen:service id="TaherIPTV0.Relay">
+        <tizen:content src="service/relay.js"/>
+        <tizen:name>TaherRelay</tizen:name>
+        <tizen:icon src="icon.png"/>
+        <tizen:description>Stream relay for Taher IPTV</tizen:description>
+        <tizen:category name="http://tizen.org/category/service"/>
+    </tizen:service>
 </widget>
