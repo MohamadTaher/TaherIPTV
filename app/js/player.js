@@ -13,6 +13,13 @@
    - a failed pre-buffer is retried, PRE_TRIES times in all, then that stream is skipped;
    - hosts that allow one connection (common for paid IPTV accounts) pre-buffer by taking turns.
 
+   The relay (one-connection hosts, MPEG-TS): a background service (service/relay.js) holds the single
+   connection and gives every player its own unbroken stream on 127.0.0.1, so here these hosts pre-buffer
+   like any other, with no swap. The players only tell the relay which of them is on screen. Pre-buffers
+   are renewed every RELAY_AGE_MS because the relay can continue a fetch without a skip for about 10 s,
+   and only for RELAY_IDLE_MS after the last channel change: each fetch borrows the watched channel's connection.
+   Taking turns, below, is the fallback when the relay is not running or the stream is not MPEG-TS.
+
    Taking turns (one-connection hosts): the provider's own app showed (2026-11-11) that the server sends a
    few seconds of recent video the moment a connection opens, and keeps only the newest connection. So
    pre-buffers open one at a time; each takes the connection, and the players it cut keep what they have
@@ -47,6 +54,18 @@ var Player = (function () {
   var STALL_MS = 700;         // a cut channel buffering this long has run out of buffered video
   var REJOIN_TRIES = 2;       // rejoin attempts before the channel is simply started again
   var SWAP_MS = 1500;         // a rejoin swap keeps the old player on screen at most this long
+  var RELAY = 'http://127.0.0.1:18769';   // service/relay.js
+  var RELAY_VERSION = 4;      // must match VERSION there; an older relay still running is stopped
+  var RELAY_APP = 'TaherIPTV0.Relay';
+  var RELAY_PRE = 2;          // pre-buffers through the relay; the 4th player is spare for renewing them
+  var RELAY_AGE_MS = 6000;    // a relay pre-buffer is renewed at this age...
+  var RELAY_VALID_MS = 10000; // ...because past this age the relay could not continue it without a skip: it is not used
+  var RELAY_DROP_MS = 12000;  // and it is dropped at this age if it could not be renewed
+  var RELAY_READY_MS = 15000; // the relay may make a pre-buffer wait for the connection, so allow longer than PRE_READY_MS
+  var RELAY_IDLE_MS = 30000;  // no channel change or browsing for this long: stop renewing. Every fetch borrows the
+                              // watched channel's connection, and the reconnect is only seamless when the provider
+                              // sends us back to the same stream server.
+  var RELAY_TICK_MS = 2000;   // how often the relay is asked whether it can fetch, and pre-buffers are renewed
   var RECT = [0, 0, 1920, 1080];
   var ASPECTS = { fit: 'PLAYER_DISPLAY_MODE_LETTER_BOX', fill: 'PLAYER_DISPLAY_MODE_FULL_SCREEN' };
 
@@ -65,6 +84,16 @@ var Player = (function () {
   var conflictAt = {};    // host -> when it was found to allow one connection
   var roundDone = '';     // the pre-buffer request last served on the watched channel's host; not served twice
   var lastSwap = null;    // { ms, frames } of the last rejoin swap, for info()
+  var instant = true;     // pre-buffer on one-connection hosts (setInstant); off: plain starts, nothing borrowed
+  var relayOk = false;    // the relay answered with our version
+  var relayLend = false;  // the relay can fetch a pre-buffer now without starving the watched channel
+  var relayTries = 0;
+  var cidSeq = Date.now() % 1000000000;   // client ids for the relay; it may outlive this page
+  var lastAsk = 0;        // when the app last asked for pre-buffers
+  var dbgLog = [];        // recent player events, for info()
+
+  function dbg(s) { dbgLog.push(((Date.now() % 1000000) / 1000).toFixed(1) + ' ' + s); if (dbgLog.length > 60) dbgLog.shift(); }
+  function ch(e) { return e && e.url ? e.url.slice(e.url.lastIndexOf('/') + 1) : '-'; }
 
   // Pool entries: { p, role: 'free'|'active'|'pre', broken, url, ready, failed, started, opened, claim,
   //                 cut, cutAt, dry, rejoin, swapped }
@@ -92,19 +121,19 @@ var Player = (function () {
 
   // A player that is not in use. The first touch of AVPlay costs ~400 ms, so this runs on first play.
   // Pre-buffering passes noEvict: it must not push out a channel it asked for a moment ago.
+  //
+  // All players are taken from AVPlayStore in one go. After a player has been closed, getPlayer() hands
+  // out that same player again although we still hold and reuse it (seen on the TV 2026-11-11): the new
+  // entry's open() then fails with INVALID_STATE, and closing it kills the channel on screen.
   function freeEntry(noEvict) {
     var i;
-    for (i = 0; i < pool.length; i++) if (pool[i].role === 'free' && !pool[i].broken) return pool[i];
-    if (storeOk !== false && pool.length < POOL_MAX) {
-      try {
-        var e = { p: webapis.avplaystore.getPlayer(), role: 'free' };
-        storeOk = true;
-        pool.push(e);
-        return e;
-      } catch (err) {
-        if (storeOk === null) storeOk = false;
+    if (!pool.length && storeOk !== false) {
+      for (i = 0; i < POOL_MAX; i++) {
+        try { pool.push({ p: webapis.avplaystore.getPlayer(), role: 'free' }); storeOk = true; } catch (err) { break; }
       }
+      if (!pool.length) storeOk = false;
     }
+    for (i = 0; i < pool.length; i++) if (pool[i].role === 'free' && !pool[i].broken) return pool[i];
     if (!pool.length) {   // no AVPlayStore: one player, no pre-buffering
       try { pool.push({ p: webapis.avplay, role: 'free' }); return pool[0]; } catch (err) { return null; }
     }
@@ -128,7 +157,7 @@ var Player = (function () {
     try { s = e.p.getState(); } catch (err) { /* treat as open */ }
     if (s !== 'NONE' && s !== 'IDLE') { try { e.p.stop(); } catch (err) { /* not playing */ } }
     try { e.p.close(); } catch (err) { /* already closed */ }
-    if (e === active) active = null;
+    if (e === active) { dbg('release active ' + ch(e) + ' state ' + s); active = null; }
     e.role = 'free'; e.url = ''; e.ready = false; e.failed = false; e.started = false;
     e.onReady = null; e.opened = 0; e.claim = 0;
     clearTimeout(e.stall);
@@ -143,9 +172,85 @@ var Player = (function () {
     e.broken = true;
   }
 
+  // The pre-buffer of a channel. While one is being renewed there are two: the ready one wins, then the newer.
   function preFor(url) {
-    for (var i = 0; i < pool.length; i++) if (pool[i].role === 'pre' && pool[i].url === url && !pool[i].failed) return pool[i];
-    return null;
+    var best = null;
+    pool.forEach(function (x) {
+      if (x.role !== 'pre' || x.url !== url || x.failed) return;
+      if (!best || (x.ready && !best.ready) || (x.ready === best.ready && x.opened > best.opened)) best = x;
+    });
+    return best;
+  }
+
+  /* ---------- relay ---------- */
+
+  function relayGet(path, done) {
+    var x = new XMLHttpRequest();
+    x.open('GET', RELAY + path);
+    x.timeout = 2000;
+    x.onload = function () { if (done) done(x.status === 200 ? x.responseText : ''); };
+    x.onerror = x.ontimeout = function () { if (done) done(''); };
+    x.send();
+  }
+
+  // Launches the relay service and waits until it answers (2-4 s on the TV). Without it, taking turns is used.
+  function relayStart() {
+    if (!native || typeof tizen === 'undefined') return;
+    relayGet('/ping', function (text) {
+      var v = 0;
+      try { v = JSON.parse(text).version; } catch (e) { /* not running yet */ }
+      if (v === RELAY_VERSION) { relayReady(); return; }
+      if (text) relayGet('/exit');   // another build's relay: stop it, ours starts on a later try
+      if (++relayTries > 30) return;
+      if (relayTries % 6 === 1) {
+        try {
+          tizen.application.launchAppControl(new tizen.ApplicationControl('http://tizen.org/appcontrol/operation/service'),
+            RELAY_APP, function () {}, function () {});
+        } catch (e) { /* no such service on this build */ }
+      }
+      setTimeout(relayStart, 700);
+    });
+  }
+
+  function relayReady() {
+    relayOk = true;
+    relayGet('/watch?c=0');
+    // A channel started before the relay was up runs on its own connection, which the relay would cut.
+    if (active && active.started && relayed(active.url)) startCold(token, active.url, active.ua, true);
+    setTimeout(relayTick, RELAY_TICK_MS);
+  }
+
+  // Renews relay pre-buffers while the app is in use; after RELAY_IDLE_MS without a request they are dropped.
+  // Pre-buffers are only opened when the relay says it can fetch now: a player left waiting for data that
+  // does not come is a player that hangs.
+  function relayTick() {
+    setTimeout(relayTick, RELAY_TICK_MS);
+    if (!lastWant.length) return;
+    if (Date.now() - lastAsk > RELAY_IDLE_MS) {
+      lastWant = [];
+      pool.forEach(function (e) { if (e.role === 'pre' && e.relay && !claimed(e)) release(e); });
+      return;
+    }
+    relayGet('/ping', function (text) {
+      try { relayLend = !!JSON.parse(text).lend; } catch (e) { relayLend = false; }
+      refresh();
+    });
+  }
+
+  // Goes through the relay: an MPEG-TS stream on a one-connection host, while the relay is running.
+  function relayed(url) { return relayOk && instant && !!singleHosts[host(url)] && /\.ts($|\?)/i.test(url); }
+
+  // Has to take turns: a one-connection host whose stream does not go through the relay.
+  function shares(url) { return !!singleHosts[host(url)] && !relayed(url); }
+
+  function relayQuery(e) {
+    return 'c=' + e.cid + '&u=' + encodeURIComponent(e.url) + (e.ua ? '&ua=' + encodeURIComponent(e.ua) : '');
+  }
+
+  // Tells the relay which player is on screen (none when the picture does not come through it).
+  function relayWatch(e) {
+    if (!relayOk) return;
+    relayGet('/watch?' + (e && e.relay ? relayQuery(e) : 'c=0'));
   }
 
   function emitFor(e, state, detail) {
@@ -161,9 +266,12 @@ var Player = (function () {
     e.bitrate = 0; e.switched = false;
     clearTimeout(e.stall);
     e.cut = false; e.cutAt = 0; e.dry = false; e.rejoin = false; e.swapped = false; e.rejoins = 0;
-    p.open(url);
+    e.relay = relayed(url); e.cid = e.relay ? ++cidSeq : 0; e.ua = ua;
+    // The relay starts on the channel for the screen before the player has even connected to it.
+    if (role === 'active') { relayWatch(e); relayLend = false; }
+    p.open(e.relay ? RELAY + '/live?' + relayQuery(e) : url);
     try { p.setVideoStillMode('false'); } catch (err) { /* optional */ }
-    if (ua) { try { p.setStreamingProperty('USER_AGENT', ua); } catch (err) { /* optional */ } }
+    if (ua && !e.relay) { try { p.setStreamingProperty('USER_AGENT', ua); } catch (err) { /* optional */ } }
     // UHD mode, set between open and prepare. Single-quality 4K streams play at 3840x2160 without it
     // (tested on the TV 2026-11-07); Samsung's docs require it for adaptive streams to pick UHD variants.
     try { p.setStreamingProperty('SET_MODE_4K', 'TRUE'); } catch (err) { /* not a UHD model */ }
@@ -179,6 +287,7 @@ var Player = (function () {
       onbufferingprogress: function () {},
       onbufferingcomplete: function () { clearTimeout(e.stall); if (e.started) emitFor(e, 'playing'); },
       onstreamcompleted: function () {
+        dbg('completed ' + e.role + ' ' + ch(e));
         if (e.cut) { drained(e); return; }   // expected: the server closed it when a later open took the connection
         if (!lostTurn(e)) emitFor(e, 'ended');
       },
@@ -195,11 +304,11 @@ var Player = (function () {
     p.setDisplayRect(RECT[0], RECT[1], RECT[2], RECT[3]);
     p.setDisplayMethod(ASPECTS[aspect]);
     if (role === 'pre') p.setStreamingProperty('PREBUFFER_MODE', '0');
-    var opened = e.opened, shared = !!singleHosts[host(url)];
+    var opened = e.opened, shared = shares(url);
     setTimeout(function () {
       if (e.opened !== opened || e.ready || e.failed) return;
       hung(e);
-    }, role === 'pre' ? PRE_READY_MS : PREPARE_MS);
+    }, role !== 'pre' ? PREPARE_MS : e.relay ? RELAY_READY_MS : PRE_READY_MS);
     p.prepareAsync(function () {
       if (e.opened !== opened) return;
       e.ready = true;
@@ -218,9 +327,9 @@ var Player = (function () {
   // Opening e took the connection from every other player on its host.
   function takeTurn(e) {
     var h = host(e.url);
-    if (!singleHosts[h]) return;
+    if (!shares(e.url)) return;
     pool.forEach(function (x) {
-      if (x === e || x.cut || !x.url || host(x.url) !== h) return;
+      if (x === e || x.cut || x.relay || !x.url || host(x.url) !== h) return;
       x.cut = true;
       x.cutAt = Date.now();
     });
@@ -229,11 +338,15 @@ var Player = (function () {
 
   // Channels to keep pre-buffered now, most likely first.
   function wanted() {
-    var want = [], shared = 0;
+    var want = [], shared = 0, viaRelay = 0;
     lastWant.forEach(function (c) {
       if (!c || !c.url || want.length >= PRE_MAX || (preFails[c.url] || 0) >= PRE_TRIES || (active && active.url === c.url)) return;
       var h = host(c.url);
-      if (singleHosts[h]) {
+      if (singleHosts[h] && !instant) return;
+      if (relayed(c.url)) {
+        if (viaRelay >= RELAY_PRE) return;
+        viaRelay++;
+      } else if (singleHosts[h]) {
         if ((shareFails[h] || 0) >= SHARE_FAILS || shared >= SHARE_MAX) return;
         shared++;
       }
@@ -248,14 +361,14 @@ var Player = (function () {
   function shareStep() {
     if (!native || storeOk === false) return;
     var a = active, ah = a && a.url ? host(a.url) : '';
-    if (a && singleHosts[ah] && !a.started) return;   // the channel being started keeps the connection
+    if (a && shares(a.url) && !a.started) return;   // the channel being started keeps the connection
     var busy = {}, rejoining = false;
     pool.forEach(function (e) {
       if (e.role !== 'pre' || !e.url) return;
       if (!e.ready && !e.failed) busy[host(e.url)] = true;
       if (e.rejoin) rejoining = true;
     });
-    var want = preloadOn ? wanted().filter(function (c) { return singleHosts[host(c.url)]; }) : [];
+    var want = preloadOn ? wanted().filter(function (c) { return shares(c.url); }) : [];
     var key = token + '|' + want.map(function (c) { return c.url; }).join('|');
     var closed = !!a && a.cut && (a.dry || Date.now() - a.cutAt > SHARE_ROUND_MS);
     want.forEach(function (c) {
@@ -265,7 +378,7 @@ var Player = (function () {
       var e = freeEntry(true);
       if (!e || storeOk !== true || e.role !== 'free') return;
       e.ua = c.ua;
-      try { openOn(e, c.url, c.ua, 'pre'); busy[h] = true; } catch (err) { retire(e); }
+      try { openOn(e, c.url, c.ua, 'pre'); busy[h] = true; } catch (err) { dbg('open threw: ' + (err && (err.name + ' ' + err.message))); retire(e); }
     });
     if (a && a.cut && !busy[ah] && !rejoining) {
       roundDone = key;
@@ -289,7 +402,7 @@ var Player = (function () {
           promote(token, e);
         };
         return;
-      } catch (err) { retire(e); }
+      } catch (err) { dbg('open threw: ' + (err && (err.name + ' ' + err.message))); retire(e); }
     }
     startCold(token, a.url, a.ua, true);
   }
@@ -310,6 +423,7 @@ var Player = (function () {
   function lostTurn(e) {
     var h = host(e.url);
     if (e !== active || e.tok !== token || !singleHosts[h] || e.retried) return false;
+    if (e.relay) { startCold(token, e.url, e.ua, true); return true; }   // the relay dropped it: start it again once
     var fresh = !!conflictAt[h] && Date.now() - conflictAt[h] < 2 * CONFLICT_MS;   // the host was only just found out
     var shared = e.swapped || fresh;
     pool.forEach(function (x) { if (x !== e && x.url && host(x.url) === h) shared = true; });
@@ -330,16 +444,18 @@ var Player = (function () {
 
   // A pre-buffer failed: count it, fall back if a switch was waiting on it, retry shortly.
   function preFailed(e, retirePlayer) {
-    var url = e.url, ua = e.ua, claim = e.claim;
-    if (!e.rejoin) preFails[url] = (preFails[url] || 0) + 1;
-    if (retirePlayer) retire(e); else release(e);
+    var url = e.url, ua = e.ua, claim = e.claim, viaRelay = e.relay;
+    if (!e.rejoin && !viaRelay) preFails[url] = (preFails[url] || 0) + 1;
+    if (retirePlayer && !viaRelay) retire(e); else release(e);
     if (claim === token) startCold(claim, url, ua);
+    if (viaRelay) return;   // the relay could not serve it now; relayTick asks again
     clearTimeout(retryTimer);
-    retryTimer = setTimeout(function () { preload(lastWant); }, PRE_RETRY_MS);
+    retryTimer = setTimeout(refresh, PRE_RETRY_MS);
   }
 
   // prepareAsync never answered. A player that hangs twice in a row is retired.
   function hung(e) {
+    dbg('hung ' + e.role + ' ' + ch(e));
     if (e.cut && e.role === 'pre') { dropCut(e); return; }
     e.hangs = (e.hangs || 0) + 1;
     var bad = e.hangs >= 2;
@@ -350,6 +466,7 @@ var Player = (function () {
   }
 
   function failed(e, msg) {
+    dbg('failed ' + e.role + ' ' + ch(e) + (e.cut ? ' cut' : '') + ': ' + msg);
     if (e.cut) {   // expected: a later open on its one-connection host took the connection
       if (e === active) drained(e);
       else if (e.role === 'pre' && !e.ready) dropCut(e);
@@ -387,6 +504,7 @@ var Player = (function () {
       try {
         e.p.play();
         e.started = true;
+        if (e.relay) relayGet('/play?c=' + e.cid);
         emitFor(e, 'playing');
       } catch (err) {
         // A cut pre-buffer that will not play its buffered video: start the channel normally.
@@ -403,6 +521,7 @@ var Player = (function () {
   /* ---------- switching ---------- */
 
   function startCold(my, url, ua, retried) {
+    dbg('cold ' + url.slice(url.lastIndexOf('/') + 1) + (retried ? ' (retry)' : ''));
     // One connection at a time for normal starts: the old stream closes first.
     release(active);
     var pre = preFor(url);
@@ -417,6 +536,7 @@ var Player = (function () {
         return;
       } catch (err) {
         // INVALID_STATE on a closed player: it is broken, use another one.
+        dbg('cold open threw: ' + (err && (err.name + ' ' + err.message)));
         active = null;
         retire(e);
       }
@@ -426,6 +546,7 @@ var Player = (function () {
 
   // A ready pre-buffer: start it first, then close the old one (Samsung's documented order).
   function promote(my, e) {
+    dbg('promote ' + ch(e) + (e.cut ? ' cut' : ''));
     var old = active, same = !!old && old !== e && old.url === e.url;
     active = e; e.role = 'active'; e.tok = my; e.retried = false; e.claim = 0; e.rejoin = false;
     // A pre-buffer that was cut plays what it buffered; it rejoins after the next pre-buffers had their turn.
@@ -433,9 +554,14 @@ var Player = (function () {
     try { e.p.setDisplayMethod(ASPECTS[aspect]); } catch (err) { /* keep going */ }
     // Same channel in a new player (a rejoin): the old one holds its last frame when it stops.
     if (same) { try { old.p.setVideoStillMode('true'); } catch (err) { /* optional */ } }
+    relayWatch(e);
     begin(e);
     if (same) handOver(old, e);
     else if (old && old !== e) setTimeout(function () { if (old !== active) release(old); }, 0);
+    // A renewal of this channel's pre-buffer that was still under way is not needed any more.
+    setTimeout(function () {
+      pool.forEach(function (x) { if (x !== e && x.role === 'pre' && x.url === e.url && e === active) release(x); });
+    }, 0);
   }
 
   // A rejoin swap: the old player stays on screen until the new one is showing frames (its clock moves),
@@ -469,9 +595,11 @@ var Player = (function () {
 
   function playAv(my, url, ua) {
     var e = preFor(url);
-    if (e && e.ready) promote(my, e);
-    else if (e) claim(my, e);
-    else startCold(my, url, ua);
+    // A relay pre-buffer that is too old would play stale video and then skip: start the channel afresh instead.
+    var stale = !!e && e.relay && Date.now() - e.opened > RELAY_VALID_MS;
+    if (e && e.ready && !stale) promote(my, e);
+    else if (e && !e.relay) claim(my, e);
+    else startCold(my, url, ua);   // a relay pre-buffer that is not ready: the relay keeps what it has fetched for it
   }
 
   function playHtml(url, startMs) {
@@ -513,6 +641,7 @@ var Player = (function () {
     startAt = 0;
     roundDone = '';
     clearTimeout(pending);
+    relayWatch(null);
     if (native) pool.forEach(release);
     else { vid.pause(); vid.removeAttribute('src'); vid.load(); }
     onState('idle', '');
@@ -552,29 +681,64 @@ var Player = (function () {
   // Keep these channels pre-buffered ([{url, ua}], most likely first) and drop the rest.
   function preload(list) {
     lastWant = list || [];
+    lastAsk = Date.now();
+    refresh();
+  }
+
+  // Brings the pre-buffers in line with the last request: drops the unwanted, renews the old, opens the missing.
+  function refresh() {
     if (!native || !preloadOn || storeOk === false) return;
     var want = wanted();
     var urls = want.map(function (c) { return c.url; });
     pool.forEach(function (e) {
       if (e.role !== 'pre' || claimed(e)) return;
       if (e.rejoin && active && active.url === e.url) return;
-      var shared = !!singleHosts[host(e.url)];
-      var stale = Date.now() - e.opened > (shared ? SHARE_AGE_MS : PRE_MAX_AGE_MS);
-      if (urls.indexOf(e.url) === -1 || stale) release(e);
+      var age = Date.now() - e.opened;
+      if (urls.indexOf(e.url) === -1) { release(e); return; }
+      if (e.relay) {
+        if (age > RELAY_DROP_MS) release(e);
+        else if (age > RELAY_AGE_MS && e.ready && relayLend) { renew(e); relayLend = false; }
+        return;
+      }
+      if (age > (shares(e.url) ? SHARE_AGE_MS : PRE_MAX_AGE_MS)) release(e);
     });
     want.forEach(function (c) {
-      if (singleHosts[host(c.url)] || preFor(c.url)) return;   // one-connection hosts take turns, see shareStep
+      if (shares(c.url) || preFor(c.url)) return;   // hosts that take turns are handled in shareStep
+      if (relayed(c.url)) { if (!relayLend) return; relayLend = false; }   // one at a time, when the relay can
       var e = freeEntry(true);
       if (!e || storeOk !== true || e.role !== 'free') return;   // without AVPlayStore the only player is the active one
       e.ua = c.ua;
-      try { openOn(e, c.url, c.ua, 'pre'); } catch (err) { retire(e); }
+      try { openOn(e, c.url, c.ua, 'pre'); } catch (err) { dbg('open threw: ' + (err && (err.name + ' ' + err.message))); retire(e); }
     });
     shareStep();
+  }
+
+  // A relay pre-buffer is getting old: open a new one beside it and drop the old one when the new one is
+  // ready, so the channel is never without a pre-buffer. Without a spare player the old one goes first.
+  function renew(old) {
+    var other = false;
+    pool.forEach(function (x) { if (x !== old && x.role === 'pre' && x.url === old.url) other = true; });
+    if (other) return;   // already being renewed
+    var e = freeEntry(true);
+    if (!e || storeOk !== true || e.role !== 'free') { release(old); return; }
+    try {
+      openOn(e, old.url, old.ua, 'pre');
+      e.onReady = function () { if (old.role === 'pre' && old.url === e.url && !claimed(old)) release(old); };
+    } catch (err) { dbg('open threw: ' + (err && (err.name + ' ' + err.message))); retire(e); }
   }
 
   function setPreload(on) {
     preloadOn = !!on;
     if (!preloadOn) pool.forEach(function (e) { if (e.role === 'pre' && !claimed(e) && !e.rejoin) release(e); });
+  }
+
+  // Instant channel change on one-connection hosts. It borrows the watched channel's connection to fetch the
+  // neighbours, and the provider may hand the connection back on another stream server, about 10-15 s
+  // apart from the first: the picture then skips or repeats a few seconds. Off means no borrowing at all.
+  function setInstant(on) {
+    instant = !!on;
+    if (!instant) pool.forEach(function (e) { if (e.role === 'pre' && !claimed(e) && singleHosts[host(e.url)]) release(e); });
+    return instant;
   }
 
   // The account says it allows one connection (Xtream max_connections), so there is no need to find out by failing.
@@ -604,10 +768,13 @@ var Player = (function () {
     // '+' ready, '~' cut (plays what it buffered), '!' ran dry, 'R' rejoining; the last path part tells channels apart.
     out.pool = pool.map(function (e) {
       return (e.broken ? 'X ' : '') + e.role + (e.ready ? '+' : '') + (e.cut ? '~' : '') + (e.dry ? '!' : '') + (e.rejoin ? 'R' : '') +
+        (e.relay ? ' relay' : '') + (e.role === 'pre' ? ' ' + Math.round((Date.now() - e.opened) / 1000) + 's' : '') +
         (e.url ? ' ' + host(e.url) + ' ' + e.url.slice(e.url.lastIndexOf('/') + 1) : '');
     });
     out.shareFails = shareFails;
     out.swap = lastSwap;
+    out.relay = relayOk ? (relayLend ? 'lend' : 'busy') : false;
+    out.log = dbgLog;
     var av = active && active.p;
     if (!av) { out.state = 'NONE'; return out; }
     try { out.state = av.getState(); } catch (e) { out.state = 'ERR ' + e.message; }
@@ -672,6 +839,8 @@ var Player = (function () {
     return out;
   }
 
+  relayStart();
+
   return {
     native: native,
     play: play,
@@ -683,6 +852,7 @@ var Player = (function () {
     preload: preload,
     setPreload: setPreload,
     oneConnection: oneConnection,
+    setInstant: setInstant,
     isPreloaded: function (url) { var e = native && preFor(url); return !!(e && e.ready); },
     isPreloading: function (url) { return !!(native && preFor(url)); },
     info: info,
