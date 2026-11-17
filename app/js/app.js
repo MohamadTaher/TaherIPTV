@@ -28,8 +28,6 @@
   var TRACK = 960;          // scroll track height in px (matches .scroll in CSS)
   var OSD_MS = 5000;
   var NUM_MS = 1600;
-  var PRELOAD_AFTER_PLAY_MS = 150;    // the new stream is already playing; start on the next ones at once
-  var PRELOAD_FOCUS_MS = 700;         // focus must rest this long before its channel is pre-buffered
   var FAV = [{ list: 'red', name: 'Red' }, { list: 'green', name: 'Green' }, { list: 'blue', name: 'Blue' }];
   var HEART = '<path d="M12 20.3l-1.3-1.2C5.6 14.5 2.6 11.8 2.6 8.4c0-2.7 2.1-4.8 4.8-4.8 1.6 0 3.2.8 4.6 2.2 1.4-1.4 3-2.2 4.6-2.2 2.7 0 4.8 2.1 4.8 4.8 0 3.4-3 6.1-8.1 10.7z"/>';
   var GRIP = '<svg viewBox="0 0 24 24" class="grip"><path d="M5 8h14M5 12h14M5 16h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>';
@@ -75,8 +73,14 @@
     query: '',
     loading: false,
     tile: 0,
-    num: '', numTimer: 0, osdTimer: 0, toastTimer: 0, preTimer: 0, zapDir: 1, exitArmed: false
+    num: '', numTimer: 0, osdTimer: 0, toastTimer: 0, exitArmed: false
   };
+
+  // Home screen focus: 'tiles' (bottom), 'search' (top) or 'row' (H.row = index into H.rows).
+  // Rows are continue watching and recent channels, or search results while H.query is set.
+  var H = { zone: 'tiles', row: 0, rows: [], idx: {}, query: '', searchTimer: 0 };
+  var HOME_CARDS = 6;      // cards visible per row
+  var HOME_RESULTS = 60;   // search results kept per row
 
   var screens = {};        // registered by other modules
   var loadListeners = [];
@@ -170,7 +174,7 @@
     S.screen = name;
     document.body.setAttribute('data-screen', name);
     if (name === 'home') openHome();
-    else if (name === 'live') openLive();
+    else if (name === 'live') openLive(arg);
     else if (name === 'playlists') openPlaylists(prev);
     else screens[name].open(arg);
   }
@@ -191,7 +195,6 @@
   }
 
   function stopLive() {
-    clearTimeout(S.preTimer);
     if (S.playing) Player.stop();
     S.playing = null;
     document.body.classList.remove('has-video', 'full');
@@ -308,6 +311,9 @@
       moveLiveKeys();
       S.query = '';
       $('search-input').value = '';
+      H.query = '';
+      $('h-search-input').value = '';
+      H.zone = 'tiles';
       buildCats();
       S.catIndex = 0;
       buildView(false);
@@ -381,9 +387,14 @@
     $('h-account').innerHTML = a;
 
     var h = new Date().getHours();
-    var hi = h < 5 ? 'Good evening' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
-    $('h-hero').innerHTML = '<div class="hero-hi"><b>' + hi + '</b></div>' +
-      '<div class="hero-q">What would you like to watch?</div><div class="hero-row">' + recentForHero() + '</div>';
+    $('h-hi').innerHTML = '<b>' + (h < 5 ? 'Good evening' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening') + '</b>';
+
+    buildHomeRows();
+    if (H.zone === 'row' && !H.rows.length) H.zone = H.query ? 'search' : 'tiles';
+    if (H.zone === 'tiles' && H.query) H.zone = 'search';
+    H.row = clamp(H.row, 0, Math.max(0, H.rows.length - 1));
+    $('home').className = 'home z-' + H.zone + (H.query ? ' searching' : '');
+    renderHomeRows();
 
     var html = '';
     TILES.forEach(function (t, i) {
@@ -392,30 +403,182 @@
         '<div class="tile-name">' + t.name + '</div><div class="tile-sub">' + esc(tileCount(t.id)) + '</div></div>';
     });
     $('tiles').innerHTML = html;
+    renderHomeLegend();
   }
 
-  // A short "continue" line on the home screen: last live channel and last movie or episode.
-  function recentForHero() {
-    if (!S.data) return '';
-    var out = [], live = Library.history('live')[0], mov = Library.history('movie')[0], ser = Library.history('series')[0];
-    if (live) out.push('<span class="hero-item"><span class="k">Last channel</span>' + esc(live.name || '') + '</span>');
-    var v = mov && (!ser || mov.at > ser.at) ? mov : ser;
-    if (v) {
-      var what = v.ep ? v.name + ' · S' + pad(v.ep.season) + 'E' + pad(v.ep.num) : v.name;
-      out.push('<span class="hero-item"><span class="k">Continue</span>' + esc(what || '') + '</span>');
+  // A home card: { kind: 'live' | 'movie' | 'series', it, sub, pct }.
+  function liveCard(ch) { return { kind: 'live', it: ch, sub: (ch.num ? 'Ch ' + ch.num + ' · ' : '') + (ch.group || '') }; }
+
+  function vodCard(kind, it, h) {
+    var sub = it.group || '', pct = 0;
+    if (h && h.dur > 0 && h.pos > 0 && h.pos < h.dur) {
+      pct = 100 * h.pos / h.dur;
+      sub = Math.max(1, Math.round((h.dur - h.pos) / 60000)) + ' min left';
     }
-    return out.join('');
+    if (kind === 'series' && h && h.ep) {
+      var c = 'S' + pad(h.ep.season) + 'E' + pad(h.ep.num);
+      sub = pct ? c + ' · ' + sub : 'Next after ' + c;
+    }
+    return { kind: kind, it: it, sub: sub, pct: pct };
+  }
+
+  function buildHomeRows() {
+    var rows = [];
+    if (S.data) {
+      if (H.query.trim()) {
+        var q = H.query.trim().toLowerCase();
+        var match = function (it) { return (it.name || '').toLowerCase().indexOf(q) !== -1; };
+        var ch = S.channels.filter(function (c) { return match(c) || String(c.num) === q; });
+        var mv = (S.data.movies || []).filter(match), sr = (S.data.series || []).filter(match);
+        if (ch.length) rows.push({ id: 'r-live', title: 'Channels', total: ch.length, cards: ch.slice(0, HOME_RESULTS).map(liveCard) });
+        if (mv.length) rows.push({ id: 'r-movie', title: 'Movies', total: mv.length, cards: mv.slice(0, HOME_RESULTS).map(function (it) { return vodCard('movie', it, null); }) });
+        if (sr.length) rows.push({ id: 'r-series', title: 'Series', total: sr.length, cards: sr.slice(0, HOME_RESULTS).map(function (it) { return vodCard('series', it, null); }) });
+      } else {
+        var cont = App.vodContinue ? App.vodContinue() : [];
+        if (cont.length) rows.push({ id: 'cont', title: 'Continue watching', total: cont.length, cards: cont.map(function (c) { return vodCard(c.kind, c.it, c.h); }) });
+        var rc = recentChannels().slice(0, 30);
+        if (rc.length) rows.push({ id: 'recent', title: 'Recent channels', total: rc.length, cards: rc.map(liveCard) });
+      }
+    }
+    H.rows = rows;
+    rows.forEach(function (r) { H.idx[r.id] = clamp(H.idx[r.id] || 0, 0, r.cards.length - 1); });
+  }
+
+  function cardHtml(c, sel) {
+    var img = logoHtml(c.it, 'h-img' + (c.kind === 'live' ? '' : ' poster'));
+    if (c.pct > 0) img = img.replace(/<\/span>$/, '<span class="v-prog"><i style="width:' + c.pct.toFixed(1) + '%"></i></span></span>');
+    return '<div class="h-card' + (sel ? ' sel' : '') + '">' + img +
+      '<div class="h-title">' + esc(c.it.name || '') + '</div><div class="h-sub">' + esc(c.sub || '') + '</div></div>';
+  }
+
+  function renderHomeRows() {
+    var html = '';
+    if (!H.rows.length) {
+      if (H.query.trim()) html = '<div class="h-empty">Nothing found for “' + esc(H.query.trim()) + '”<small>Try a shorter word or part of the name</small></div>';
+      else if (S.data) html = '<div class="h-empty">What would you like to watch?<small>Channels and movies you watch will show up here</small></div>';
+    }
+    H.rows.forEach(function (r, ri) {
+      var at = H.idx[r.id], first = windowStart(at, r.cards.length, HOME_CARDS);
+      html += '<div class="h-row"><div class="h-label">' + esc(r.title) + '<span>' + count(r.total) + '</span></div><div class="h-cards">';
+      r.cards.slice(first, first + HOME_CARDS).forEach(function (c, j) {
+        html += cardHtml(c, H.zone === 'row' && H.row === ri && first + j === at);
+      });
+      html += '</div></div>';
+    });
+    $('h-rows').innerHTML = html;
+  }
+
+  function renderHomeLegend() {
+    var html;
+    if (H.zone === 'search') {
+      html = '<span><kbd>OK</kbd>Type</span><span><kbd>▼</kbd>' + (H.rows.length ? 'Results' : 'Menu') + '</span>' +
+        '<span><kbd>BACK</kbd>' + (H.query ? 'Clear' : 'Close') + '</span>';
+    } else {
+      var card = H.zone === 'row' ? curCard() : null;
+      html = '<span><kbd>◀ ▶</kbd>Move</span><span><kbd>OK</kbd>' + (card && card.kind === 'live' ? 'Watch' : 'Open') + '</span>' +
+        '<span><i class="dot yellow"></i>Search</span><span><i class="dot blue"></i>Playlists</span>' +
+        '<span><kbd>BACK</kbd>' + (H.query ? 'Clear search' : 'Exit') + '</span>';
+    }
+    $('home-legend').innerHTML = html;
+  }
+
+  function curCard() {
+    var r = H.rows[H.row];
+    return r ? r.cards[H.idx[r.id]] : null;
+  }
+
+  function homeSearchInput() { return $('h-search-input'); }
+
+  function openHomeSearch() {
+    H.zone = 'search';
+    renderHome();
+    homeSearchInput().focus();
+  }
+
+  function clearHomeSearch() {
+    clearTimeout(H.searchTimer);
+    H.query = '';
+    homeSearchInput().value = '';
+    H.zone = 'search';
+    renderHome();
+  }
+
+  function onHomeTyped() {
+    clearTimeout(H.searchTimer);
+    H.searchTimer = setTimeout(function () {
+      H.query = homeSearchInput().value;
+      H.row = 0;
+      H.idx = {};
+      renderHome();
+    }, 250);
+  }
+
+  // Down: search box -> first row -> next rows -> tiles (no tiles while searching).
+  function homeDown() {
+    if (H.zone === 'search') {
+      if (H.rows.length) { H.zone = 'row'; H.row = 0; } else if (!H.query) H.zone = 'tiles';
+    } else if (H.zone === 'row') {
+      if (H.row < H.rows.length - 1) H.row++; else if (!H.query) H.zone = 'tiles';
+    }
+  }
+
+  function homeUp() {
+    if (H.zone === 'tiles') {
+      if (H.rows.length) { H.zone = 'row'; H.row = H.rows.length - 1; } else H.zone = 'search';
+    } else if (H.zone === 'row') {
+      if (H.row > 0) H.row--; else H.zone = 'search';
+    }
+  }
+
+  function openCard(c) {
+    if (!c) return;
+    if (c.kind === 'live') { go('live', { play: c.it }); return; }
+    if (App.openTitle) App.openTitle(c.kind, c.it);
   }
 
   function homeKey(e, k) {
+    var input = homeSearchInput();
+    if (document.activeElement === input) {
+      if (k === KEY.ENTER || k === KEY.IME_DONE || k === KEY.DOWN) {
+        input.blur(); e.preventDefault();
+        clearTimeout(H.searchTimer);
+        H.query = input.value;
+        H.row = 0;
+        H.idx = {};
+        buildHomeRows();
+        homeDown();
+        renderHome();
+      } else if (k === KEY.IME_CANCEL || k === KEY.BACK || k === 27) {
+        input.blur(); e.preventDefault();
+      }
+      return; // let the keyboard type
+    }
     e.preventDefault();
-    switch (k) {
-      case KEY.LEFT: S.tile = clamp(S.tile - 1, 0, TILES.length - 1); break;
-      case KEY.RIGHT: S.tile = clamp(S.tile + 1, 0, TILES.length - 1); break;
-      case KEY.ENTER: openTile(TILES[S.tile].id); return;
-      case KEY.BLUE: go('playlists'); return;
-      case KEY.BACK: armExit(); return;
-      default: return;
+    if (k === KEY.YELLOW) { openHomeSearch(); return; }
+    if (k === KEY.BLUE) { go('playlists'); return; }
+    if (k === KEY.BACK) {
+      if (H.query) clearHomeSearch();
+      else if (H.zone !== 'tiles') { H.zone = 'tiles'; renderHome(); }
+      else armExit();
+      return;
+    }
+    if (k === KEY.UP) homeUp();
+    else if (k === KEY.DOWN) homeDown();
+    else if (H.zone === 'search') {
+      if (k === KEY.ENTER) input.focus();
+      return;
+    } else if (H.zone === 'row') {
+      var r = H.rows[H.row];
+      if (!r) return;
+      if (k === KEY.LEFT) H.idx[r.id] = clamp(H.idx[r.id] - 1, 0, r.cards.length - 1);
+      else if (k === KEY.RIGHT) H.idx[r.id] = clamp(H.idx[r.id] + 1, 0, r.cards.length - 1);
+      else if (k === KEY.ENTER) { openCard(curCard()); return; }
+      else return;
+    } else {
+      if (k === KEY.LEFT) S.tile = clamp(S.tile - 1, 0, TILES.length - 1);
+      else if (k === KEY.RIGHT) S.tile = clamp(S.tile + 1, 0, TILES.length - 1);
+      else if (k === KEY.ENTER) { openTile(TILES[S.tile].id); return; }
+      else return;
     }
     renderHome();
   }
@@ -440,11 +603,21 @@
 
   /* ---------- live: playback ---------- */
 
-  function openLive() {
+  // arg.play: a channel picked on the home screen; it plays full screen from All channels.
+  function openLive(arg) {
     S.mode = 'guide';
     S.zone = 'cats';
     endModes();
     refreshCounts();
+    if (arg && arg.play) {
+      S.query = '';
+      searchInput().value = '';
+      for (var c = 0; c < S.cats.length; c++) if (S.cats[c].id === 'all') { S.catIndex = c; break; }
+      buildView(false);
+      for (var j = 0; j < S.view.length; j++) {
+        if (sameCh(S.view[j], arg.play)) { S.listIndex = j; S.zone = 'list'; play(S.view[j]); goFull(); return; }
+      }
+    }
     buildView(false);
     render();
     // Start where the user left off.
@@ -473,44 +646,7 @@
     renderList();
     renderLive();
     if (state === 'error' && S.mode === 'full') showOsd();
-    if (state === 'playing') schedulePreload(PRELOAD_AFTER_PLAY_MS);
   });
-
-  // Channels the user is likely to pick next, most likely first: in full screen two ahead in the
-  // zap direction and one behind (CH+/-), in the guide the focused row and the rows around it.
-  function preloadTargets() {
-    var list = S.view.length ? S.view : S.channels, out = [];
-    if (!list.length) return out;
-    function at(ch) { for (var j = 0; j < list.length; j++) if (sameCh(list[j], ch)) return j; return -1; }
-    if (S.mode === 'full') {
-      var i = at(S.playing);
-      if (i === -1) return out;
-      var d = S.zapDir, n = list.length;
-      [d, -d, 2 * d].forEach(function (k) {
-        var ch = list[((i + k) % n + n) % n];
-        if (!sameCh(ch, S.playing) && out.indexOf(ch) === -1) out.push(ch);
-      });
-    } else {
-      var f = S.view[S.listIndex];
-      if (!f) return out;
-      if (!sameCh(f, S.playing)) out.push(f);
-      [1, -1].forEach(function (k) {
-        var ch = S.view[S.listIndex + k];
-        if (ch && !sameCh(ch, S.playing)) out.push(ch);
-      });
-    }
-    return out;
-  }
-
-  function schedulePreload(ms) {
-    clearTimeout(S.preTimer);
-    S.preTimer = setTimeout(function () {
-      if (S.screen !== 'live' || S.loading) return;
-      // Pre-buffering competes with the stream that is still starting, so wait for it.
-      if (S.playing && S.state !== 'playing' && S.state !== 'error') return;
-      Player.preload(preloadTargets());
-    }, ms);
-  }
 
   function goFull() {
     if (!S.playing) return;
@@ -519,7 +655,6 @@
     document.body.classList.add('full');
     renderLive();
     showOsd();
-    schedulePreload(300);
   }
 
   function goGuide() {
@@ -529,7 +664,6 @@
     $('osd').classList.remove('show');
     for (var j = 0; j < S.view.length; j++) if (sameCh(S.view[j], S.playing)) { S.listIndex = j; break; }
     render();
-    schedulePreload(PRELOAD_FOCUS_MS);
   }
 
   function zap(step) {
@@ -538,7 +672,6 @@
     var at = -1;
     for (var j = 0; j < list.length; j++) if (sameCh(list[j], S.playing)) { at = j; break; }
     var next = (at + step + list.length) % list.length;
-    S.zapDir = step > 0 ? 1 : -1;
     if (list === S.view) S.listIndex = next;
     play(list[next]);
     showOsd();
@@ -1231,7 +1364,6 @@
       default: return;
     }
     render();
-    schedulePreload(PRELOAD_FOCUS_MS);
   }
 
   function listKey(k) {
@@ -1276,7 +1408,6 @@
     renderLive();
     guideClass();
     if (S.zone === 'cats') renderCats();
-    schedulePreload(PRELOAD_FOCUS_MS);
   }
 
   function fullKey(k) {
@@ -1316,6 +1447,7 @@
   });
 
   searchInput().addEventListener('input', onSearchTyped);
+  homeSearchInput().addEventListener('input', onHomeTyped);
 
   function registerKeys() {
     try {

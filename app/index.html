@@ -30,16 +30,20 @@
     <div class="clock"><div id="h-time" class="h-time"></div><div id="h-date" class="h-date"></div></div>
   </div>
 
-  <div id="h-hero" class="home-hero"></div>
+  <div class="home-hero">
+    <div id="h-hi" class="hero-hi"></div>
+    <div id="h-search" class="h-search">
+      <svg viewBox="0 0 24 24" class="icon"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M15.5 15.5l5 5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>
+      <input id="h-search-input" type="text" placeholder="Search channels, movies and series" spellcheck="false" autocomplete="off">
+    </div>
+  </div>
+
+  <!-- Continue watching and recent channels, or search results while searching -->
+  <div id="h-rows" class="h-rows"></div>
 
   <div id="tiles" class="tiles"></div>
 
-  <div class="legend home-legend">
-    <span><kbd>◀ ▶</kbd>Move</span>
-    <span><kbd>OK</kbd>Open</span>
-    <span><i class="dot blue"></i>Playlists</span>
-    <span><kbd>BACK</kbd>Exit</span>
-  </div>
+  <div id="home-legend" class="legend home-legend"></div>
 </div>
 
 <!-- ---------- live TV guide ---------- -->

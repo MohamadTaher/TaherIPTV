@@ -4,7 +4,7 @@ An IPTV player for Samsung Tizen TVs, built as a Tizen web app (1920x1080, remot
 
 - Home screen with Live TV, Movies, Series, Playlists and Settings.
 - Channel guide with categories, search, favourites, recently watched and sorting.
-- Full-screen player on Samsung AVPlay, with near-instant channel switching through pre-buffering.
+- Full-screen player on Samsung AVPlay: one plain player, one stream at a time.
 - Saved playlists: M3U links and Xtream Codes logins (account status and expiry shown on the home screen);
   includes presets for public free-to-air playlists and a verified test playlist.
 
