@@ -10,7 +10,7 @@
   var KEY = App.KEY, $ = App.$, esc = App.esc, clamp = App.clamp, pad = App.pad, dur = App.dur;
   var COLS = 5;
   var ROWS = 3;                 // grid rows on screen
-  var CAT_ROWS = 16;
+  var CAT_ROWS = 13;
   var EP_ROWS = 7;
   var SEASONS_SHOWN = 8;
   var DONE = 0.95;              // watched this much = finished
@@ -284,7 +284,7 @@
     var thumb = $('v-thumb');
     thumb.parentNode.style.visibility = rows > ROWS ? 'visible' : 'hidden';
     if (rows > ROWS) {
-      var track = 936, h = Math.max(36, track * ROWS / rows);
+      var track = 942, h = Math.max(36, track * ROWS / rows);
       thumb.style.height = h + 'px';
       thumb.style.top = ((track - h) * K.top / (rows - ROWS)) + 'px';
     }
