@@ -24,7 +24,7 @@
     IME_DONE: 65376, IME_CANCEL: 65385
   };
   var LIST_ROWS = 14;
-  var CAT_ROWS = 17;
+  var CAT_ROWS = 13;
   var TRACK = 960;          // scroll track height in px (matches .scroll in CSS)
   var OSD_MS = 5000;
   var NUM_MS = 1600;
@@ -77,7 +77,7 @@
   };
 
   // Home screen focus: 'tiles' (bottom), 'search' (top) or 'row' (H.row = index into H.rows).
-  // Rows are continue watching and recent channels, or search results while H.query is set.
+  // Rows exist only while searching (H.query set); otherwise the home screen shows just the tiles.
   var H = { zone: 'tiles', row: 0, rows: [], idx: {}, query: '', searchTimer: 0 };
   var HOME_CARDS = 6;      // cards visible per row
   var HOME_RESULTS = 60;   // search results kept per row
@@ -433,11 +433,6 @@
         if (ch.length) rows.push({ id: 'r-live', title: 'Channels', total: ch.length, cards: ch.slice(0, HOME_RESULTS).map(liveCard) });
         if (mv.length) rows.push({ id: 'r-movie', title: 'Movies', total: mv.length, cards: mv.slice(0, HOME_RESULTS).map(function (it) { return vodCard('movie', it, null); }) });
         if (sr.length) rows.push({ id: 'r-series', title: 'Series', total: sr.length, cards: sr.slice(0, HOME_RESULTS).map(function (it) { return vodCard('series', it, null); }) });
-      } else {
-        var cont = App.vodContinue ? App.vodContinue() : [];
-        if (cont.length) rows.push({ id: 'cont', title: 'Continue watching', total: cont.length, cards: cont.map(function (c) { return vodCard(c.kind, c.it, c.h); }) });
-        var rc = recentChannels().slice(0, 30);
-        if (rc.length) rows.push({ id: 'recent', title: 'Recent channels', total: rc.length, cards: rc.map(liveCard) });
       }
     }
     H.rows = rows;
@@ -455,7 +450,6 @@
     var html = '';
     if (!H.rows.length) {
       if (H.query.trim()) html = '<div class="h-empty">Nothing found for “' + esc(H.query.trim()) + '”<small>Try a shorter word or part of the name</small></div>';
-      else if (S.data) html = '<div class="h-empty">What would you like to watch?<small>Channels and movies you watch will show up here</small></div>';
     }
     H.rows.forEach(function (r, ri) {
       var at = H.idx[r.id], first = windowStart(at, r.cards.length, HOME_CARDS);
