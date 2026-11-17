@@ -15,6 +15,9 @@ Repo: github.com/MohamadTaher/TaherIPTV.
 - `app/playlists/test.m3u` is the verified test playlist (preset "Test channels"); use it for real testing.
 - `tools/mock_xtream.py` is a fake Xtream server (`mock-xtream` in `.claude/launch.json`, port 8766, login
   demo / demo) with live, movies, series and account data, for testing Xtream features in the browser.
+- `node tools/playersim.js` runs `player.js` against a fake TV player and a fake clock. Run it after touching
+  `player.js`. The player is deliberately plain: one AVPlay player, one stream at a time, nothing opened ahead.
+  `Player.info().start` gives the timing of the last start (ms from the key press to each step).
 - App id `TaherIPTV0.TaherIPTV`. Do not rename it.
 
 ## Git workflow

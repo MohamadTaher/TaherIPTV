@@ -28,8 +28,6 @@
   var TRACK = 960;          // scroll track height in px (matches .scroll in CSS)
   var OSD_MS = 5000;
   var NUM_MS = 1600;
-  var PRELOAD_AFTER_PLAY_MS = 150;    // the new stream is already playing; start on the next ones at once
-  var PRELOAD_FOCUS_MS = 700;         // focus must rest this long before its channel is pre-buffered
   var FAV = [{ list: 'red', name: 'Red' }, { list: 'green', name: 'Green' }, { list: 'blue', name: 'Blue' }];
   var HEART = '<path d="M12 20.3l-1.3-1.2C5.6 14.5 2.6 11.8 2.6 8.4c0-2.7 2.1-4.8 4.8-4.8 1.6 0 3.2.8 4.6 2.2 1.4-1.4 3-2.2 4.6-2.2 2.7 0 4.8 2.1 4.8 4.8 0 3.4-3 6.1-8.1 10.7z"/>';
   var GRIP = '<svg viewBox="0 0 24 24" class="grip"><path d="M5 8h14M5 12h14M5 16h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>';
@@ -75,7 +73,7 @@
     query: '',
     loading: false,
     tile: 0,
-    num: '', numTimer: 0, osdTimer: 0, toastTimer: 0, preTimer: 0, zapDir: 1, exitArmed: false
+    num: '', numTimer: 0, osdTimer: 0, toastTimer: 0, exitArmed: false
   };
 
   // Home screen focus: 'tiles' (bottom), 'search' (top) or 'row' (H.row = index into H.rows).
@@ -197,7 +195,6 @@
   }
 
   function stopLive() {
-    clearTimeout(S.preTimer);
     if (S.playing) Player.stop();
     S.playing = null;
     document.body.classList.remove('has-video', 'full');
@@ -649,44 +646,7 @@
     renderList();
     renderLive();
     if (state === 'error' && S.mode === 'full') showOsd();
-    if (state === 'playing') schedulePreload(PRELOAD_AFTER_PLAY_MS);
   });
-
-  // Channels the user is likely to pick next, most likely first: in full screen two ahead in the
-  // zap direction and one behind (CH+/-), in the guide the focused row and the rows around it.
-  function preloadTargets() {
-    var list = S.view.length ? S.view : S.channels, out = [];
-    if (!list.length) return out;
-    function at(ch) { for (var j = 0; j < list.length; j++) if (sameCh(list[j], ch)) return j; return -1; }
-    if (S.mode === 'full') {
-      var i = at(S.playing);
-      if (i === -1) return out;
-      var d = S.zapDir, n = list.length;
-      [d, -d, 2 * d].forEach(function (k) {
-        var ch = list[((i + k) % n + n) % n];
-        if (!sameCh(ch, S.playing) && out.indexOf(ch) === -1) out.push(ch);
-      });
-    } else {
-      var f = S.view[S.listIndex];
-      if (!f) return out;
-      if (!sameCh(f, S.playing)) out.push(f);
-      [1, -1].forEach(function (k) {
-        var ch = S.view[S.listIndex + k];
-        if (ch && !sameCh(ch, S.playing)) out.push(ch);
-      });
-    }
-    return out;
-  }
-
-  function schedulePreload(ms) {
-    clearTimeout(S.preTimer);
-    S.preTimer = setTimeout(function () {
-      if (S.screen !== 'live' || S.loading) return;
-      // Pre-buffering competes with the stream that is still starting, so wait for it.
-      if (S.playing && S.state !== 'playing' && S.state !== 'error') return;
-      Player.preload(preloadTargets());
-    }, ms);
-  }
 
   function goFull() {
     if (!S.playing) return;
@@ -695,7 +655,6 @@
     document.body.classList.add('full');
     renderLive();
     showOsd();
-    schedulePreload(300);
   }
 
   function goGuide() {
@@ -705,7 +664,6 @@
     $('osd').classList.remove('show');
     for (var j = 0; j < S.view.length; j++) if (sameCh(S.view[j], S.playing)) { S.listIndex = j; break; }
     render();
-    schedulePreload(PRELOAD_FOCUS_MS);
   }
 
   function zap(step) {
@@ -714,7 +672,6 @@
     var at = -1;
     for (var j = 0; j < list.length; j++) if (sameCh(list[j], S.playing)) { at = j; break; }
     var next = (at + step + list.length) % list.length;
-    S.zapDir = step > 0 ? 1 : -1;
     if (list === S.view) S.listIndex = next;
     play(list[next]);
     showOsd();
@@ -1407,7 +1364,6 @@
       default: return;
     }
     render();
-    schedulePreload(PRELOAD_FOCUS_MS);
   }
 
   function listKey(k) {
@@ -1452,7 +1408,6 @@
     renderLive();
     guideClass();
     if (S.zone === 'cats') renderCats();
-    schedulePreload(PRELOAD_FOCUS_MS);
   }
 
   function fullKey(k) {

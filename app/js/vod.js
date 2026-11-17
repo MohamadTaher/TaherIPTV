@@ -661,7 +661,6 @@
       seekTimer: 0, streak: 0, lastKey: 0, lastDir: 0, osdTimer: 0, nextTimer: 0, resumeAt: 0 };
     V.view = 'player';
     setMode();
-    Player.preload([]);
     renderPlayer();
     Player.play(P.url, '', startMs);
   }
