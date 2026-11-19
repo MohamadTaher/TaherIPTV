@@ -25,8 +25,12 @@ var Player = (function () {
   var FRAME_POLLS = 100;      // ...and for how long (5 s)
   var RECT = [0, 0, 1920, 1080];
   var ASPECTS = { fit: 'PLAYER_DISPLAY_MODE_LETTER_BOX', fill: 'PLAYER_DISPLAY_MODE_FULL_SCREEN' };
+  // Movies and episodes show the shape the provider encoded (play(..., { aspect: 'auto' })); the Fit/Fill
+  // toggle is for live channels.
+  var AUTO = 'PLAYER_DISPLAY_MODE_AUTO_ASPECT_RATIO';
 
   var aspect = 'fit';
+  var auto = false;       // the current play shows the stream's own aspect ratio
   var token = 0;          // bumps on every play/stop so late callbacks from old streams are ignored
   var pending = 0;        // timer of a play that has not started yet
   var lastPlay = 0;
@@ -132,6 +136,13 @@ var Player = (function () {
     start();
   }
 
+  function applyDisplay() {
+    try {
+      av.setDisplayRect(RECT[0], RECT[1], RECT[2], RECT[3]);
+      av.setDisplayMethod(auto ? AUTO : ASPECTS[aspect]);
+    } catch (err) { /* not open */ }
+  }
+
   function playAv(my, url, ua, t0) {
     var T = { wait: Date.now() - t0, closed: 0, opened: 0, prepared: 0, play: 0, frame: 0 };
     var c = { tok: my, url: url, ready: false, started: false, bitrate: 0, switched: false };
@@ -148,12 +159,12 @@ var Player = (function () {
       try { av.setStreamingProperty('SET_MODE_4K', 'TRUE'); } catch (err) { /* not a UHD model */ }
       try { av.setBufferingParam('PLAYER_BUFFER_FOR_PLAY', 'PLAYER_BUFFER_SIZE_IN_SECOND', START_BUFFER_S); } catch (err) { /* optional */ }
       av.setListener(listener(c));
-      av.setDisplayRect(RECT[0], RECT[1], RECT[2], RECT[3]);
-      av.setDisplayMethod(ASPECTS[aspect]);
+      applyDisplay();
       T.opened = Date.now() - t0;
       hangTimer = setTimeout(function () { if (!c.ready) hung(c); }, PREPARE_MS);
       av.prepareAsync(function () {
         if (c !== cur) return;
+        applyDisplay();   // again once the stream is known: set before prepare, it does not always hold
         c.ready = true;
         clearTimeout(hangTimer);
         T.prepared = Date.now() - t0;
@@ -185,9 +196,12 @@ var Player = (function () {
   /* ---------- play and stop ---------- */
 
   // Reports 'loading' at once, lets the page paint it, then swaps streams.
-  function play(url, ua, startMs) {
+  // opts.aspect 'auto': show the stream's own aspect ratio (movies, episodes) instead of Fit/Fill.
+  function play(url, ua, startMs, opts) {
     token++;
     startAt = startMs > 0 ? startMs : 0;
+    auto = !!opts && opts.aspect === 'auto';
+    vid.classList.toggle('fill', !auto && aspect === 'fill');
     var my = token, now = Date.now();
     clearTimeout(pending);
     onState('loading', '');
@@ -244,8 +258,8 @@ var Player = (function () {
 
   function setAspect(mode) {
     aspect = ASPECTS[mode] ? mode : 'fit';
-    vid.classList.toggle('fill', aspect === 'fill');
-    if (cur) { try { av.setDisplayMethod(ASPECTS[aspect]); } catch (e) { /* not open */ } }
+    vid.classList.toggle('fill', !auto && aspect === 'fill');
+    if (cur) applyDisplay();
     return aspect;
   }
 
@@ -254,7 +268,7 @@ var Player = (function () {
   // Position, duration (ms; 0 for live), video size and the timing of the last start.
   // Also used by tools/tvdebug.py.
   function info() {
-    var out = { native: native, time: 0, duration: 0, width: 0, height: 0, aspect: aspect };
+    var out = { native: native, time: 0, duration: 0, width: 0, height: 0, aspect: auto ? 'auto' : aspect };
     if (!native) {
       out.time = Math.round(vid.currentTime * 1000);
       out.duration = isFinite(vid.duration) ? Math.round(vid.duration * 1000) : 0;

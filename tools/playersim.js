@@ -49,7 +49,8 @@ function world() {
     p.setStreamingProperty = function () {};
     p.setBufferingParam = function () {};
     p.setDisplayRect = function () {};
-    p.setDisplayMethod = function () {};
+    p.displays = [];   // 'STATE:mode' for every display mode set
+    p.setDisplayMethod = function (m) { p.displays.push(p.state + ':' + m.replace('PLAYER_DISPLAY_MODE_', '')); };
     p.setListener = function (l) { p.listener = l; };
     // 'slow' takes 3 s, 'bad' fails, 'hang' never answers. An answer still arrives after a close:
     // the worst case, which the player must ignore.
@@ -191,6 +192,23 @@ console.log('8. a movie resumes from its saved position');
   w.P.play('movie', '', 60000); w.run(2000);
   var i = w.log.indexOf('main seek 60000'), j = w.log.indexOf('main play movie');
   check(i !== -1 && j !== -1 && i < j, 'seeks to 60 s before playing');
+})();
+
+console.log('9. movies show the stream\'s own aspect ratio; live channels follow Fit/Fill');
+(function () {
+  var w = world();
+  w.P.setAspect('fill');
+  w.P.play('movie', '', 0, { aspect: 'auto' }); w.run(2000);
+  var p = w.open()[0], d = p.displays;
+  check(d[d.length - 1] === 'READY:AUTO_ASPECT_RATIO', 'auto is set again once the stream is ready (got ' + d.join(',') + ')');
+  w.P.setAspect('fit');
+  check(p.displays[p.displays.length - 1] === 'PLAYING:AUTO_ASPECT_RATIO', 'the Fit/Fill toggle does not change a movie (got ' + p.displays.slice(-1) + ')');
+  check(w.P.info().aspect === 'auto', 'info() reports auto (got ' + w.P.info().aspect + ')');
+  w.P.play('live'); w.run(2000);
+  var q = w.open()[0];
+  check(q.displays[q.displays.length - 1] === 'READY:LETTER_BOX', 'a live channel after it uses Fit again (got ' + q.displays.join(',') + ')');
+  w.P.setAspect('fill');
+  check(q.displays[q.displays.length - 1] === 'PLAYING:FULL_SCREEN', 'Fill applies to the live channel (got ' + q.displays.slice(-1) + ')');
 })();
 
 console.log(failures ? '\n' + failures + ' check(s) FAILED' : '\nall checks passed');
