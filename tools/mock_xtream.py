@@ -7,7 +7,8 @@ In the app: Playlists > Add Xtream Codes login > server http://127.0.0.1:8766, u
 Or Add M3U link > http://127.0.0.1:8766/get.php?username=demo&password=demo&type=m3u_plus
 
 Implements player_api.php (account, live/vod/series categories and lists, get_series_info, get_vod_info),
-get.php (M3U with /live/, /movie/ and /series/ entries), SVG posters, and stream URLs that redirect to
+get.php (M3U with /live/, /movie/ and /series/ entries), SVG posters and backdrops (two movies in three and
+every other series have a backdrop, so both looks of the movies screen show), and stream URLs that redirect to
 public test videos. Login 'expired' / 'demo' answers with an expired account; any other login is rejected.
 """
 import json, sys, time
@@ -44,7 +45,7 @@ LIVE = [{'num': i + 1, 'name': f'{c[1]} {i + 1}', 'stream_id': 100 + i, 'stream_
 VOD = []
 for i in range(48):
     cat = VOD_CATS[i % len(VOD_CATS)]
-    name = f'{WORDS[i % 20]} {WORDS[(i * 7 + 3) % 20]}' + (f' ({2020 + i % 7})' if i % 3 else '')
+    name = ('EN - ' if i % 5 == 0 else '') + f'{WORDS[i % 20]} {WORDS[(i * 7 + 3) % 20]}' +         (f' ({2020 + i % 7})' if i % 3 else '') + (' 4K' if i % 8 == 1 else '')
     VOD.append({'num': i + 1, 'name': name, 'stream_id': 1000 + i, 'stream_icon': f'/poster/m{1000 + i}.svg',
                 'rating': str(round(5 + (i * 37 % 50) / 10, 1)), 'added': str(NOW - i * 86400),
                 'category_id': cat[0], 'container_extension': 'mp4'})
@@ -58,13 +59,29 @@ for i in range(14):
                    'category_id': cat[0], 'genre': cat[1], 'releaseDate': f'{2015 + i % 10}-03-01'})
 
 
+GENRES = ['Drama, Thriller', 'Action, Adventure', 'Comedy', 'Science Fiction, Mystery', 'Animation, Family', 'Crime, Drama']
+PEOPLE = ['Mara Venn', 'Elias Shore', 'Tomas Bell', 'June Cross', 'Nadia Rook', 'Omar Haddad', 'Lena Park', 'Rafael Ortiz']
+PLOT = ('{n} follows a reluctant crew through one long night in a city that never sleeps. Old debts come due, '
+        'loyalties shift, and a single choice at dawn decides who walks away. A test title served by the mock server.')
+
+
+def has_bd(key):
+    return int(key[1:]) % 3 != 0 if key[0] == 'm' else int(key[1:]) % 2 == 0
+
+
+def cast(i):
+    return ', '.join(PEOPLE[(i + k) % len(PEOPLE)] for k in range(5))
+
+
 def episodes(sid):
     out = {}
     seasons = 1 + sid % 3
     for s in range(1, seasons + 1):
         out[str(s)] = [{'id': str(sid * 100 + s * 10 + e), 'episode_num': e, 'title': f'Episode {e}',
                         'container_extension': 'mp4',
-                        'info': {'duration_secs': 600 + e * 60, 'plot': f'Season {s}, episode {e}.', 'movie_image': ''}}
+                        'info': {'duration_secs': 2400 + e * 60,
+                                 'plot': f'Season {s}, episode {e}. The crew splits up to follow two leads, and one of them goes nowhere good.',
+                                 'movie_image': f'/backdrop/s{sid}.svg' if e % 2 else ''}}
                        for e in range(1, 7)]
     return out
 
@@ -86,6 +103,16 @@ def poster(key):
             f'<stop offset="1" stop-color="hsl({(h + 50) % 360},60%,16%)"/></linearGradient></defs>'
             f'<rect width="300" height="450" fill="url(#g)"/><circle cx="150" cy="150" r="70" fill="rgba(255,255,255,.12)"/>'
             f'{lines}</svg>').encode()
+
+
+def backdrop(key):
+    h = sum(ord(c) * 31 for c in key) % 360
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">'
+            f'<defs><linearGradient id="s" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="hsl({h},45%,22%)"/>'
+            f'<stop offset=".6" stop-color="hsl({(h + 30) % 360},55%,45%)"/><stop offset="1" stop-color="hsl({(h + 50) % 360},60%,62%)"/></linearGradient></defs>'
+            f'<rect width="1280" height="720" fill="url(#s)"/><circle cx="900" cy="380" r="90" fill="hsl({(h + 60) % 360},80%,78%)" opacity=".85"/>'
+            f'<path d="M0 520 L220 360 L380 470 L560 300 L760 480 L940 340 L1120 450 L1280 380 L1280 720 L0 720z" fill="hsl({h},35%,14%)"/>'
+            f'<path d="M0 600 L300 500 L520 590 L800 480 L1050 600 L1280 540 L1280 720 L0 720z" fill="hsl({h},30%,8%)"/></svg>').encode()
 
 
 class H(BaseHTTPRequestHandler):
@@ -110,6 +137,8 @@ class H(BaseHTTPRequestHandler):
         path = u.path
         if path.startswith('/poster/'):
             return self.send(200, poster(path[8:].rsplit('.', 1)[0]), 'image/svg+xml')
+        if path.startswith('/backdrop/'):
+            return self.send(200, backdrop(path[10:].rsplit('.', 1)[0]), 'image/svg+xml')
         parts = path.strip('/').split('/')
         if len(parts) == 4 and parts[0] in ('live', 'movie', 'series'):
             sid = int(parts[3].split('.')[0])
@@ -141,18 +170,33 @@ class H(BaseHTTPRequestHandler):
             body = [dict(v, stream_icon=self.base() + v['stream_icon']) for v in VOD]
         elif action == 'get_series_categories': body = cat(SER_CATS)
         elif action == 'get_series':
-            body = [dict(s, cover=self.base() + s['cover']) for s in SERIES]
+            body = [dict(s, cover=self.base() + s['cover'],
+                         backdrop_path=[self.base() + f'/backdrop/s{s["series_id"]}.svg'] if has_bd(f's{s["series_id"]}') else [])
+                    for s in SERIES]
         elif action == 'get_series_info':
             sid = int(q.get('series_id', 0))
             s = next((x for x in SERIES if x['series_id'] == sid), None)
-            body = {'info': dict(s, cover=self.base() + s['cover'], backdrop_path=[]) if s else {},
-                    'episodes': episodes(sid) if s else {}, 'seasons': []}
+            eps = episodes(sid) if s else {}
+            for season in eps.values():
+                for e in season:
+                    if e['info']['movie_image']:
+                        e['info']['movie_image'] = self.base() + e['info']['movie_image']
+            body = {'info': dict(s, cover=self.base() + s['cover'], cast=cast(sid), director=PEOPLE[sid % 8],
+                                 backdrop_path=[self.base() + f'/backdrop/s{sid}.svg'] if has_bd(f's{sid}') else [])
+                    if s else {}, 'episodes': eps, 'seasons': []}
         elif action == 'get_vod_info':
             vid = int(q.get('vod_id', 0))
             v = next((x for x in VOD if x['stream_id'] == vid), None)
-            body = {'info': {'plot': f'{v["name"]} is a test movie served by the mock server.', 'genre': 'Drama, Action',
-                             'releasedate': '2024-05-01', 'cast': 'A. Actor, B. Actor', 'director': 'C. Director',
-                             'duration_secs': 596, 'movie_image': self.base() + v['stream_icon'], 'rating': v['rating']}
+            plot = PLOT.format(n=v['name']) * (3 if vid % 4 == 0 else 1)   # some plots too long for 4 lines
+            body = {'info': {'plot': plot, 'genre': GENRES[vid % len(GENRES)],
+                             'releasedate': f'{2018 + vid % 8}-05-01', 'cast': cast(vid), 'director': PEOPLE[(vid + 5) % 8],
+                             'duration_secs': 5400 + (vid % 7) * 420, 'movie_image': self.base() + v['stream_icon'],
+                             'rating': v['rating'],
+                             # every other movie with a backdrop lists it in "backdrop" (one URL per line)
+                             # and leaves backdrop_path empty, as the NASA panel does
+                             'backdrop_path': [self.base() + f'/backdrop/m{vid}.svg'] if has_bd(f'm{vid}') and vid % 2 else [],
+                             'backdrop': ''.join(f'{self.base()}/backdrop/m{vid}.svg?n={n}\r\n' for n in range(3))
+                             if has_bd(f'm{vid}') and not vid % 2 else ''}
                     if v else {}, 'movie_data': {}}
         else:
             body = []

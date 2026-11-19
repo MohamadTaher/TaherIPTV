@@ -50,6 +50,14 @@ var Xtream = (function () {
   function num(v) { var n = parseFloat(v); return isFinite(n) ? n : 0; }
   function secs(v) { return num(v) * 1000; }
   function year(s) { var m = /(\d{4})/.exec(s || ''); return m ? m[1] : ''; }
+  // backdrop_path is a list of URLs on most panels, a single URL on some.
+  function first(v) { return String((Array.isArray(v) ? v[0] : v) || ''); }
+  // Some panels leave backdrop_path empty and list the backdrops in "backdrop", one URL per line
+  // (NASA, 2026-11-18: 7 movies in 8, sizes 1280x720 to 3840x2160).
+  function backdropOf(info) {
+    var m = /https?:\/\/\S+/.exec(String(info.backdrop || ''));
+    return first(info.backdrop_path) || (m ? m[0] : '');
+  }
 
   function client(login) {
     var server = cleanServer(login.server), user = login.user, pass = login.pass;
@@ -125,7 +133,7 @@ var Xtream = (function () {
         return {
           kind: 'series', id: String(s.series_id), name: s.name || '', poster: s.cover || '', group: group,
           added: secs(s.last_modified), rating: num(s.rating), plot: s.plot || '', genre: s.genre || '',
-          year: year(s.releaseDate || s.release_date)
+          year: year(s.releaseDate || s.release_date), backdrop: first(s.backdrop_path)
         };
       });
     }
@@ -147,21 +155,21 @@ var Xtream = (function () {
             })
           });
         });
-        var bd = info.backdrop_path;
         return {
           plot: info.plot || '', genre: info.genre || '', year: year(info.releaseDate || info.release_date),
-          poster: info.cover || '', backdrop: Array.isArray(bd) ? bd[0] || '' : bd || '', seasons: seasons
+          cast: info.cast || '', director: info.director || '', rating: num(info.rating),
+          poster: info.cover || '', backdrop: backdropOf(info), seasons: seasons
         };
       });
     }
 
     function movieInfo(id) {
       return api('get_vod_info', '&vod_id=' + encodeURIComponent(id)).then(function (r) {
-        var i = (r && r.info) || {}, bd = i.backdrop_path;
+        var i = (r && r.info) || {};
         return {
           plot: i.plot || i.description || '', genre: i.genre || '', year: year(i.releasedate || i.release_date),
           cast: i.cast || i.actors || '', director: i.director || '', dur: secs(i.duration_secs),
-          poster: i.movie_image || i.cover_big || '', backdrop: Array.isArray(bd) ? bd[0] || '' : bd || '',
+          poster: i.movie_image || i.cover_big || '', backdrop: backdropOf(i),
           rating: num(i.rating)
         };
       });
