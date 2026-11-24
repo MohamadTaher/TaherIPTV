@@ -1,7 +1,8 @@
 /* Movies and series screens: browse, detail, and the full-screen player.
 
+   Browse opens with the category rail out (from the home screen) and refreshes the list in the background.
    Browse: the focused title's backdrop fills the screen behind its title, facts and plot (or its poster on
-   a wash of its colours when there is no backdrop). Under them are rows of landscape cards: Continue
+   a wash of its colours when there is no backdrop). Under them are rows of poster cards: Continue
    watching, My list, Recently added, Top rated, then the provider's categories. "See all" at the end of a
    row, a category from the side rail, or a search opens the grid: the same hero over a card grid with sort
    and rating chips. The focused row always sits at the same height; the rows above it scroll away.
@@ -16,13 +17,15 @@
   'use strict';
 
   var KEY = App.KEY, $ = App.$, esc = App.esc, clamp = App.clamp, pad = App.pad, dur = App.dur;
-  var STEP = 290;               // card width (272) + gap, px
-  var VIS = 6;                  // cards fully on screen in a row; a 7th peeks in at the edge
-  var ROW_H = 236;              // rows: head + card + progress bar
-  var GRID_TOP = 58;            // grid: chips line above the cards
-  var GRID_H = 192;             // grid rows: card + progress bar + gap
+  // Two rows of 2:3 posters (226x339) show. A row shows 7 whole cards, 5 with the category rail open (the
+  // rail pushes the page 500 px = 2 cards); nothing is cut at the edge.
+  var STEP = 250;               // poster card width (226) + gap, px
+  var VIS = 7;                  // cards on screen in a row
+  var ROW_H = 400;              // rows: head + card + progress bar + gap
+  var ROWS_KEPT = [1, 3];       // rows kept drawn above and below the focused one, so moves never wait for images
+  var GRID_H = 384;             // grid rows: card + progress bar + gap
   var ROW_MAX = 40;             // cards in a row before "See all"
-  var GRID_COLS = 6;
+  var GRID_COLS = 7;
   var ROW_JUMP = 5;             // CH+/- in the rows
   var HERO_MS = 350;            // fetch the focused title's info once focus rests this long
   var INFO_MAX = 300;           // title infos kept
@@ -32,6 +35,9 @@
   var RAIL_ROWS = 12;           // categories shown in the side rail
   var RAIL_MS = 280;            // the rail's highlighted category shows once the highlight rests this long
   var MORE_MAX = 20;
+  var SHOT_STEP = 424;          // screenshot thumb width (400) + gap
+  var SHOT_VIS = 4;
+  var YOUTUBE_APP = '111299001912';   // the YouTube app on Samsung TVs
   var NEW_MS = 14 * 86400000;   // "NEW" badge for titles added in the last two weeks
   var DONE = 0.95;              // watched this much = finished
   var SAVE_MS = 10000;          // save the position this often while playing
@@ -41,7 +47,7 @@
   var SEEK_HOLD_MS = 1500;      // keep showing the target while the TV catches up
   var RECENT_MAX = 100;
   var TOP_MAX = 100;
-  var SORTS = [{ id: 'server', name: 'Default' }, { id: 'new', name: 'Newest' }, { id: 'name', name: 'A–Z' }, { id: 'top', name: 'Top rated' }];
+  var SORTS = [{ id: 'new', name: 'Newest' }, { id: 'server', name: 'Default' }, { id: 'name', name: 'A–Z' }, { id: 'top', name: 'Top rated' }];
   var RATINGS = [0, 6, 7, 8];
 
   var ICON = {
@@ -54,6 +60,7 @@
     fav: '<svg viewBox="0 0 24 24" class="ic"><path d="M12 20.3l-1.3-1.2C5.6 14.5 2.6 11.8 2.6 8.4c0-2.7 2.1-4.8 4.8-4.8 1.6 0 3.2.8 4.6 2.2 1.4-1.4 3-2.2 4.6-2.2 2.7 0 4.8 2.1 4.8 4.8 0 3.4-3 6.1-8.1 10.7z" fill="currentColor"/></svg>',
     recent: '<svg viewBox="0 0 24 24" class="ic"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>',
     top: '<svg viewBox="0 0 24 24" class="ic"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z" fill="currentColor"/></svg>',
+    trailer: '<svg viewBox="0 0 24 24" class="ic"><rect x="2.5" y="5" width="19" height="14" rx="3.5" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M10 9v6l5-3z" fill="currentColor"/></svg>',
     search: '<svg viewBox="0 0 24 24" class="icon"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M15.5 15.5l5 5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>'
   };
 
@@ -121,7 +128,7 @@
 
   function fresh() {
     return { mode: 'rows', zone: 'rows', rows: [], r: 0, pos: {}, grid: null, chip: 0, query: '',
-      sort: Store.get('vodSort', 'server'), rating: 0, hist: {} };
+      sort: Store.get('vodSort2', 'new'), rating: 0, hist: {} };
   }
 
   function items(kind) {
@@ -310,6 +317,7 @@
         '</div>' +
         '<div class="v-bfade"></div>' +
         '<div id="vd-legend" class="legend"></div>' +
+        '<div id="vd-view" class="vd-view"></div>' +
       '</div>' +
       '<div class="v-play">' +
         '<div id="vp-state" class="v-state"></div>' +
@@ -328,7 +336,8 @@
     });
   }
 
-  function openKind(kind) {
+  // From the home screen the categories are out (arg.title: a title opens straight away instead).
+  function openKind(kind, arg) {
     build();
     V.kind = kind;
     V.view = 'browse';
@@ -343,6 +352,33 @@
     $('v-search-input').value = K.query;
     $('v-search-input').placeholder = kind === 'movie' ? 'Search movies' : 'Search series';
     setMode();
+    if (!(arg && arg.title) && K.rows.length) openRail(K); else renderBrowse();
+    renderHero(true);
+    refreshList(kind);
+  }
+
+  // The list was loaded with the playlist, maybe days ago: fetch it again in the background and show
+  // titles added since (data.refreshVod skips a fetch made in the last few minutes). Shown at once while
+  // browsing; the detail page and the player pick the new list up on their way back (backToBrowse).
+  function refreshList(kind) {
+    var d = App.data();
+    if (!d || !d.refreshVod) return;
+    d.refreshVod().then(function (changed) {
+      if (!changed || App.data() !== d || !ST[kind] || V.kind !== kind || V.view !== 'browse') return;
+      if (App.current() !== (kind === 'movie' ? 'movies' : 'series')) return;
+      updateList(kind);
+    }).catch(noop);
+  }
+
+  // New lists are in: rebuild the rows (and the rail's list) keeping what is focused.
+  function updateList(kind) {
+    var K = ST[kind];
+    refreshBrowse(kind);
+    if (K.rail) {
+      var id = K.rail.list[K.rail.i] && K.rail.list[K.rail.i].id, list = railItems(K), at = 0;
+      list.forEach(function (c, i) { if (c.id === id) at = i; });
+      K.rail = { i: at, list: list };
+    }
     renderBrowse();
     renderHero(true);
   }
@@ -441,14 +477,13 @@
 
   function barHtml(pct) { return '<div class="v-prog"><i style="width:' + pct.toFixed(1) + '%"></i></div>'; }
 
-  // Landscape card: the title's TMDB backdrop at card size when there is one, else its poster cropped to
-  // 16:9, the title written over the bottom either way. A bar under the card shows where you stopped.
-  // Big provider-hosted backdrops are not used here: a row would download a dozen 4K images.
+  // Poster card (2:3): the whole poster, never cropped (a poster of another shape is letterboxed). Without
+  // a poster the title is written over a tint. A bar under the card shows where you stopped.
   function cardHtml(kind, K, it, i, x, sel, eager) {
-    var c = clean(it), h = K.hist[it.id], pct = progressOf(kind, h), info = infoOf(kind, it.id);
-    var bd = tmdbSize(it.backdrop || (info && info.backdrop) || '', 'w300'), src = bd || it.poster || '';
+    var c = clean(it), h = K.hist[it.id], pct = progressOf(kind, h);
+    var src = tmdbSize(it.poster, 'w342') || it.poster || '';
     return '<div class="vc' + (sel ? ' sel' : '') + '" data-i="' + i + '" style="left:' + x + 'px">' +
-      '<div class="vc-img' + (bd ? '' : ' crop') + '"><span class="ini" style="background:' + App.tint(c.title) + '"></span>' +
+      '<div class="vc-img"><span class="ini" style="background:' + App.tint(c.title) + '"></span>' +
         (src ? '<img ' + (eager ? 'src' : 'data-src') + '="' + esc(src) + '" onload="this.parentNode.className+=\' has-img\'" onerror="this.parentNode.removeChild(this)">' : '') +
         '<span class="vc-g"></span><span class="vc-t">' + esc(c.title) + '</span>' +
         (it.rating > 0 ? '<span class="vc-rate">★ ' + it.rating.toFixed(1) + '</span>' : '') +
@@ -506,8 +541,8 @@
   // They are rebuilt when the rows change (K.ver) or after the grid used the space.
   var rowEls = {}, rowsDrawn = '';
 
-  // focusOnly: draw just the focused row now (a row move on the TV costs one slow paint per new row);
-  // the row below follows once that frame is on screen.
+  // Rows from one above to three below the focused one stay drawn (their posters load ahead), and slide
+  // into place. focusOnly: only add a missing row that shows now; the others follow once that frame is on screen.
   function renderRows(focusOnly) {
     var kind = V.kind, K = ST[kind], box = $('v-rows'), key = kind + ':' + K.ver;
     if (!K.rows.length) {
@@ -521,9 +556,9 @@
     }
     if (rowsDrawn !== key) { rowEls = {}; rowsDrawn = key; box.innerHTML = ''; }
     var keep = {};
-    for (var r = K.r; r <= Math.min(K.rows.length - 1, K.r + 1); r++) {
+    for (var r = Math.max(0, K.r - ROWS_KEPT[0]); r <= Math.min(K.rows.length - 1, K.r + ROWS_KEPT[1]); r++) {
       var row = K.rows[r], el = rowEls[row.id];
-      if (!el && focusOnly && r !== K.r) continue;
+      if (!el && focusOnly && (r < K.r || r > K.r + 1)) continue;
       if (!el) { el = rowEls[row.id] = rowEl(kind, K, row); box.appendChild(el); }
       keep[row.id] = 1;
       translate(el, 0, (r - K.r) * ROW_H);
@@ -566,26 +601,48 @@
     return html;
   }
 
+  // The grid keeps the rows around the focused one drawn (one above, two below), like the rows view, and
+  // redraws them only when its list changes (another category, sort, filter or search).
+  var gridEls = {}, gridDrawn = null, gridVer = '';
+
   function renderGrid() {
-    var kind = V.kind, K = ST[kind], g = K.grid, row = Math.floor(g.index / GRID_COLS), html = '';
+    var kind = V.kind, K = ST[kind], g = K.grid, row = Math.floor(g.index / GRID_COLS), box = $('v-rows');
     rowEls = {};
     rowsDrawn = '';
+    if (gridDrawn !== g.view || gridVer !== kind + K.ver || !$('vg-body')) {
+      box.innerHTML = '<div class="vg-head" id="vg-head"></div><div class="vg-body" id="vg-body"></div>';
+      gridEls = {};
+      gridDrawn = g.view;
+      gridVer = kind + K.ver;
+    }
     var title = g.src === 'search' ? 'Results for “' + esc(K.query.trim()) + '”' : esc(g.title);
-    html += '<div class="vg-head"><span class="vr-name">' + title + '</span><span class="vr-count">' + App.count(g.view.length) + '</span>' +
-      '<span class="vg-chips">' + chipsHtml(K) + '</span></div>';
+    $('vg-head').innerHTML = '<span class="vr-name">' + title + '</span><span class="vr-count">' + App.count(g.view.length) + '</span>' +
+      '<span class="vg-chips">' + chipsHtml(K) + '</span>';
+    var body = $('vg-body');
     if (!g.view.length) {
-      html += '<div class="v-empty small">' + (g.src === 'search' ? 'No match' : 'Nothing here') +
+      body.innerHTML = '<div class="v-empty small">' + (g.src === 'search' ? 'No match' : 'Nothing here') +
         (K.rating ? '<small>Try a lower rating filter</small>' : g.src === 'search' ? '<small>Press BACK to clear the search</small>' : '') + '</div>';
+      return;
     }
-    for (var r = row; r < row + 2; r++) {
-      if (r * GRID_COLS >= g.view.length) break;
-      html += '<div class="vg-row" style="top:' + (GRID_TOP + (r - row) * GRID_H) + 'px">';
-      for (var i = r * GRID_COLS; i < Math.min(g.view.length, (r + 1) * GRID_COLS); i++) {
-        html += cardHtml(kind, K, g.view[i], i, (i % GRID_COLS) * STEP, i === g.index && K.zone === 'grid', true);
+    var keep = {}, last = Math.floor((g.view.length - 1) / GRID_COLS);
+    for (var r = Math.max(0, row - 1); r <= Math.min(last, row + 2); r++) {
+      var el = gridEls[r];
+      if (!el) {
+        var html = '';
+        for (var i = r * GRID_COLS; i < Math.min(g.view.length, (r + 1) * GRID_COLS); i++) {
+          html += cardHtml(kind, K, g.view[i], i, 16 + (i % GRID_COLS) * STEP, false, true);
+        }
+        el = gridEls[r] = document.createElement('div');
+        el.className = 'vg-row';
+        el.innerHTML = html;
+        translate(el, 0, (r - row) * GRID_H);
+        body.appendChild(el);
       }
-      html += '</div>';
+      translate(el, 0, (r - row) * GRID_H);
+      keep[r] = 1;
     }
-    $('v-rows').innerHTML = html;
+    for (var k in gridEls) if (gridEls.hasOwnProperty(k) && !keep[k]) { body.removeChild(gridEls[k]); delete gridEls[k]; }
+    markSel(body, K.zone === 'grid' ? g.index : -1);
   }
 
   function moveGrid(to) {
@@ -594,9 +651,7 @@
     if (to === was) return;
     g.index = to;
     if (Math.floor(to / GRID_COLS) !== Math.floor(was / GRID_COLS)) { renderGrid(); return; }
-    var cards = $('v-rows').querySelectorAll('.vg-row')[0].children;
-    if (cards[was % GRID_COLS]) cards[was % GRID_COLS].classList.remove('sel');
-    if (cards[to % GRID_COLS]) cards[to % GRID_COLS].classList.add('sel');
+    markSel($('vg-body'), to);
   }
 
   function heroMeta(f, kind) {
@@ -640,8 +695,7 @@
       (f.group ? '<div class="vh-kicker">' + esc(f.group) + '</div>' : '') +
       '<div class="vh-title">' + esc(f.title) + '</div>' +
       '<div class="vh-meta">' + heroMeta(f, kind) + '</div>' +
-      (f.plot ? '<div class="vh-plot">' + esc(f.plot) + '</div>' : '') +
-      (cont ? '<div class="vh-cont">' + cont + '</div>' : '');
+      (cont ? '<div class="vh-cont">' + cont + '</div>' : f.plot ? '<div class="vh-plot">' + esc(f.plot) + '</div>' : '');
     // The text follows every move; the backdrop (a big image) and the info request wait until focus rests,
     // so holding a key down does not fetch an image and an info for every title passed.
     if (!settled) {
@@ -802,7 +856,7 @@
   // A new sort or filter starts the grid from its first title.
   function setSort(K, id) {
     K.sort = id;
-    Store.set('vodSort', id);
+    Store.set('vodSort2', id);
     buildGrid(V.kind, K, null);
     renderBrowse();
   }
@@ -977,6 +1031,7 @@
     var kind = V.kind, req = ++reqSeq, prev = from === 'more' ? D : null, info = infoOf(kind, it.id);
     D = { kind: kind, item: it, info: info, loading: !info, err: '', zone: 'btn', btn: 0, si: 0, ei: 0, etop: 0,
       req: req, more: kind === 'movie' ? moreLike(kind, it) : [], mi: 0, moff: 0, plotOpen: false, canOpen: false,
+      shi: 0, shoff: 0, view: -1,
       prev: prev, from: prev ? prev.from : from || '' };
     V.view = 'detail';
     setMode();
@@ -1024,7 +1079,7 @@
     for (var j = 0; j < flat.length; j++) if (flat[j].ep.id === h.ep.id) { i = j; break; }
     if (i < 0) return null;
     var cur = flat[i].ep, prog = (h.eps && h.eps[cur.id]) || { pos: h.pos, dur: h.dur };
-    if (inProgress(prog)) return { ep: cur, pos: prog.pos, label: 'Resume', sub: code(cur) + ' · ' + leftDur(prog) };
+    if (inProgress(prog)) return { ep: cur, pos: prog.pos, label: 'Resume', sub: code(cur) + ' · ' + leftDur(prog), pct: 100 * prog.pos / prog.dur };
     if (flat[i + 1]) return { ep: flat[i + 1].ep, pos: 0, label: 'Play next', sub: code(flat[i + 1].ep) };
     return null;
   }
@@ -1034,18 +1089,45 @@
     if (D.kind === 'movie') {
       var h = Library.entry('movie', D.item.id), len = D.info && D.info.dur;
       if (inProgress(h)) {
-        out.push({ act: 'resume', icon: ICON.play, label: 'Continue', sub: leftDur(h), pos: h.pos });
+        out.push({ act: 'resume', icon: ICON.play, label: 'Continue', sub: leftDur(h), pos: h.pos, pct: 100 * h.pos / h.dur });
         out.push({ act: 'play', icon: ICON.again, label: 'From start' });
       } else {
         out.push({ act: 'play', icon: ICON.play, label: 'Play', sub: len > 0 ? longDur(len) : '' });
       }
     } else {
       var r = seriesResume(), first = flatEps()[0];
-      if (r) out.push({ act: 'resume', icon: ICON.play, label: r.label, sub: r.sub, ep: r.ep, pos: r.pos });
+      if (r) out.push({ act: 'resume', icon: ICON.play, label: r.label, sub: r.sub, ep: r.ep, pos: r.pos, pct: r.pct });
       else if (first) out.push({ act: 'play', icon: ICON.play, label: 'Play', sub: code(first.ep), ep: first.ep });
     }
+    if (D.kind === 'series' && D.info && D.info.trailer) out.push({ act: 'trailer', icon: ICON.trailer, label: 'Trailer' });
     out.push({ act: 'fav', icon: fav ? ICON.added : ICON.add, label: fav ? 'In My list' : 'My list' });
     return out;
+  }
+
+  // A movie's "Trailer & screenshots" row, as Netflix shows it: the trailer first, then the provider's
+  // backdrops (most list 2-5; one alone is the page's own backdrop, so it is left out).
+  // Items: { trailer: youtube id } or { shot: url }.
+  function shots() {
+    if (!D || D.kind !== 'movie' || !D.info) return [];
+    var out = [], list = D.info.shots || [];
+    if (D.info.trailer) out.push({ trailer: D.info.trailer });
+    if (list.length > 1) list.forEach(function (u) { out.push({ shot: u }); });
+    return out;
+  }
+
+  function firstShot(list) { return list.length && list[0].trailer ? 1 : 0; }
+
+  // Opens the trailer in the TV's YouTube app (a browser opens YouTube in a new tab).
+  function openTrailer(id) {
+    var url = 'https://www.youtube.com/watch?v=' + id;
+    if (!(window.tizen && tizen.application && tizen.ApplicationControl)) { window.open(url, '_blank'); return; }
+    function fail(err) { App.toast('Could not open YouTube' + (err && err.message ? ': ' + err.message : '')); }
+    try {
+      var data = [new tizen.ApplicationControlData('PAYLOAD', [JSON.stringify({ values: 'v=' + id })])];
+      var ctl = new tizen.ApplicationControl('http://tizen.org/appcontrol/operation/view', null, null, null, data);
+      tizen.application.launchAppControl(ctl, YOUTUBE_APP, noop, fail);
+      App.toast('Opening the trailer in YouTube…');
+    } catch (err) { fail(err); }
   }
 
   function renderDetail(head) {
@@ -1061,6 +1143,8 @@
       ? '<span><kbd>▲ ▼ ◀ ▶</kbd>Move</span><span><kbd>OK</kbd>Play</span><span><i class="dot green"></i>From start</span>'
       : '<span><kbd>▲ ▼ ◀ ▶</kbd>Move</span><span><kbd>OK</kbd>Select</span>';
     if (D.zone === 'plot') leg = '<span><kbd>OK</kbd>' + (D.plotOpen ? 'Less' : 'Full description') + '</span>';
+    if (D.zone === 'shots') leg = '<span><kbd>◀ ▶</kbd>Move</span><span><kbd>OK</kbd>' + (shots()[D.shi] && shots()[D.shi].trailer ? 'Play trailer' : 'View') + '</span>';
+    renderView();
     $('vd-legend').innerHTML = leg + '<span><i class="dot red"></i>My list</span><span><kbd>BACK</kbd>Back</span>';
   }
 
@@ -1077,11 +1161,6 @@
     if (f.rating > 0) chips += chip('★ ' + f.rating.toFixed(1), 'rate');
     if (f.q) chips += chip(f.q, 'q');
     if (f.fresh) chips += chip('NEW', 'new');
-    var h = series ? null : Library.entry('movie', it.id), prog = '';
-    if (h && inProgress(h)) {
-      prog = '<div class="vd-prog"><div class="v-prog"><i style="width:' + (100 * h.pos / h.dur).toFixed(1) + '%"></i></div>' +
-        '<span>' + leftDur(h) + '</span></div>';
-    }
     var cast = f.cast ? f.cast.split(/\s*,\s*/).filter(Boolean) : [], rows = '';
     if (cast.length) rows += '<div><span class="k">Starring</span><span class="v">' + esc(cast.slice(0, 3).join(', ')) + (cast.length > 3 ? '<i> and more</i>' : '') + '</span></div>';
     if (f.director) rows += '<div><span class="k">Director</span><span class="v">' + esc(f.director) + '</span></div>';
@@ -1091,7 +1170,7 @@
       (chips ? '<div class="vd-chips">' + chips + '</div>' : '') +
       (D.loading && !f.plot ? '<div class="vd-plot dim"><span class="spin-sm"></span>Loading…</div>'
         : '<div id="vd-plot" class="vd-plot">' + (f.plot ? esc(f.plot) : '<span class="dim">No description.</span>') + '</div>') +
-      prog + '<div id="vd-btns" class="vd-btns"></div>' +
+      '<div id="vd-btns" class="vd-btns"></div>' +
       (rows ? '<div class="vd-facts">' + rows + '</div>' : '');
     var plot = $('vd-plot');
     D.canOpen = !!plot && (D.plotOpen || plot.scrollHeight > plot.clientHeight + 2);
@@ -1100,9 +1179,14 @@
   function renderBtns() {
     var btns = buttons(), html = '';
     D.btn = clamp(D.btn, 0, btns.length - 1);
+    // The first button (Play, Continue, Resume) is the big one: a round play icon, its label and what it
+    // plays, and how far you got as a bar along its bottom.
     btns.forEach(function (b, i) {
-      html += '<div class="vd-btn' + (i === 0 && b.act !== 'fav' ? ' primary' : '') + (D.zone === 'btn' && i === D.btn ? ' sel' : '') + '">' + b.icon +
-        '<span class="l"><b>' + esc(b.label) + '</b>' + (b.sub ? '<small>' + esc(b.sub) + '</small>' : '') + '</span></div>';
+      var main = i === 0 && b.act !== 'fav';
+      html += '<div class="vd-btn' + (main ? ' primary' : '') + (D.zone === 'btn' && i === D.btn ? ' sel' : '') + '">' +
+        (main ? '<span class="pi">' + b.icon + '</span>' : b.icon) +
+        '<span class="l"><b>' + esc(b.label) + '</b>' + (b.sub ? '<small>' + esc(b.sub) + '</small>' : '') +
+        (main && b.pct > 0 ? '<span class="pb"><i style="width:' + b.pct.toFixed(1) + '%"></i></span>' : '') + '</span></div>';
     });
     $('vd-btns').innerHTML = html;
   }
@@ -1112,7 +1196,12 @@
     var el = $('vd-lower'), info = $('vd-info');
     if (full) el.style.top = Math.max(720, info.offsetTop + info.offsetHeight + 44) + 'px';
     if (D.kind === 'series') { el.innerHTML = seasonsHtml() + episodesHtml(); return; }
-    if (full) { el.innerHTML = castHtml() + moreHtml(); return; }
+    if (full) { el.innerHTML = shotsHtml() + moreHtml() + castHtml(); return; }
+    var ss = el.querySelector('.vs-strip');
+    if (ss) {
+      translate(ss, -D.shoff * SHOT_STEP);
+      for (var j = 0; j < ss.children.length; j++) ss.children[j].classList.toggle('sel', D.zone === 'shots' && j === D.shi);
+    }
     var strip = el.querySelector('.vr-strip');
     if (!strip) return;
     translate(strip, -D.moff * STEP);
@@ -1143,6 +1232,39 @@
     return '<div class="vd-more"><div class="vd-sec"><span class="t">More from ' + esc(D.item.group || 'this category') + '</span></div>' +
       '<div class="vr-clip"><div class="vr-strip" style="-webkit-transform:translateX(' + (-D.moff * STEP) + 'px);transform:translateX(' + (-D.moff * STEP) + 'px)">' +
       html + '</div></div></div>';
+  }
+
+  function shotsHtml() {
+    var list = shots(), html = '', n = list.length - firstShot(list);
+    if (!list.length) return '';
+    list.forEach(function (m, i) {
+      var sel = D.zone === 'shots' && i === D.shi ? ' sel' : '';
+      if (m.trailer) {
+        // YouTube's 4:3 thumbnail has the 16:9 frame between black bars; the tile crops them off.
+        var bd = facts(D.kind, D.item).backdrop;
+        html += '<div class="vs trailer' + sel + '" style="left:0">' +
+          (bd ? '<img decoding="async" src="' + esc(bd) + '" class="bd">' : '') +
+          '<img decoding="async" src="https://i.ytimg.com/vi/' + esc(m.trailer) + '/hqdefault.jpg" onerror="this.parentNode.removeChild(this)">' +
+          '<span class="vs-shade"></span><span class="vs-play">' + ICON.play + '</span><span class="vs-l">Trailer</span></div>';
+        return;
+      }
+      html += '<div class="vs' + sel + '" style="left:' + (i * SHOT_STEP) + 'px">' +
+        '<img decoding="async" src="' + esc(m.shot) + '" onerror="this.parentNode.className+=\' bad\'"></div>';
+    });
+    var title = list[0].trailer ? (n ? 'Trailer &amp; screenshots' : 'Trailer') : 'Screenshots';
+    return '<div class="vd-shots"><div class="vd-sec"><span class="t">' + title + '</span>' + (n ? '<span class="c">' + n + '</span>' : '') + '</div>' +
+      '<div class="vs-clip"><div class="vs-strip" style="-webkit-transform:translateX(' + (-D.shoff * SHOT_STEP) + 'px);transform:translateX(' + (-D.shoff * SHOT_STEP) + 'px)">' +
+      html + '</div></div></div>';
+  }
+
+  // A screenshot full screen (D.view = its index): LEFT/RIGHT for the others, OK or BACK closes.
+  function renderView() {
+    var el = $('vd-view'), list = shots(), f0 = firstShot(list);
+    if (!D || D.view < 0 || !list[D.view] || !list[D.view].shot) { el.className = 'vd-view'; el.innerHTML = ''; return; }
+    el.className = 'vd-view on';
+    el.innerHTML = '<div class="spinner"></div><img decoding="async" src="' + esc(list[D.view].shot) + '" onload="this.className=\'ok\'">' +
+      '<div class="vv-bar"><span class="vv-n">' + (D.view - f0 + 1) + ' / ' + (list.length - f0) + '</span>' +
+      '<span class="vv-k"><kbd>◀ ▶</kbd>Previous / next<kbd>BACK</kbd>Close</span></div>';
   }
 
   function seasonsHtml() {
@@ -1181,9 +1303,15 @@
   function scrollDetail() {
     var lower = $('vd-lower'), y = 0;
     if (D.zone === 'season' || D.zone === 'eps') y = -(lower.offsetTop - 110);
-    else if (D.zone === 'more') {
-      var more = lower.querySelector('.vd-more');
-      if (more) y = -(lower.offsetTop + more.offsetTop - 560);
+    else if (D.zone === 'shots' || D.zone === 'more') {
+      // The focused row sits low on the screen; the last one rises to show what is under it (cast).
+      var row = lower.querySelector(D.zone === 'shots' ? '.vd-shots' : '.vd-more');
+      var last = D.zone === 'more' || !lower.querySelector('.vd-more');
+      if (row) {
+        var top = lower.offsetTop + row.offsetTop;
+        y = -(top - 630);
+        if (last) y = Math.max(-(top - 120), Math.min(y, -(lower.offsetTop + lower.offsetHeight - 1000)));
+      }
     }
     translate($('vd-scroll'), 0, Math.min(0, y));
   }
@@ -1193,6 +1321,8 @@
     if (b.act === 'fav') {
       toggleFavItem(D.kind, D.item);
       renderDetail(false);
+    } else if (b.act === 'trailer') {
+      openTrailer(D.info.trailer);
     } else if (D.kind === 'movie') {
       startPlay(D.item, null, b.act === 'resume' ? b.pos : 0);
     } else {
@@ -1212,7 +1342,15 @@
 
   function detailKey(e, k) {
     e.preventDefault();
-    var series = D.kind === 'series', btns = buttons(), eps = curEps();
+    var series = D.kind === 'series', btns = buttons(), eps = curEps(), sh = shots();
+    if (D.view >= 0) {
+      if (k === KEY.LEFT || k === KEY.RIGHT) { D.view = clamp(D.view + (k === KEY.LEFT ? -1 : 1), firstShot(sh), sh.length - 1); D.shi = D.view; }
+      else if (k === KEY.BACK || k === KEY.ENTER) D.view = -1;
+      if (D.shi > D.shoff + SHOT_VIS - 1) D.shoff = D.shi - (SHOT_VIS - 1);
+      if (D.shi < D.shoff) D.shoff = D.shi;
+      renderDetail(false);
+      return;
+    }
     if (k === KEY.BACK) { detailBack(); return; }
     if (k === KEY.RED) { toggleFavItem(D.kind, D.item); renderDetail(false); return; }
     if (k === KEY.BLUE) { App.go('playlists'); return; }
@@ -1226,6 +1364,7 @@
         if (k === KEY.LEFT) D.btn = clamp(D.btn - 1, 0, btns.length - 1);
         else if (k === KEY.RIGHT) D.btn = clamp(D.btn + 1, 0, btns.length - 1);
         else if (k === KEY.UP && D.canOpen) D.zone = 'plot';
+        else if (k === KEY.DOWN && !series && sh.length) D.zone = 'shots';
         else if (k === KEY.DOWN && ready) D.zone = series ? (D.info.seasons.length > 1 ? 'season' : 'eps') : 'more';
         else if (k === KEY.ENTER) { detailAct(btns[D.btn]); return; }
         else if (k === KEY.PLAY || k === KEY.PLAY_PAUSE) { detailAct(btns[0]); return; }
@@ -1235,8 +1374,18 @@
           D.mi = clamp(D.mi + (k === KEY.LEFT ? -1 : 1), 0, D.more.length - 1);
           if (D.mi > D.moff + VIS - 2) D.moff = D.mi - (VIS - 2);
           if (D.mi < D.moff + 1) D.moff = Math.max(0, D.mi - 1);
-        } else if (k === KEY.UP) D.zone = 'btn';
+        } else if (k === KEY.UP) D.zone = sh.length ? 'shots' : 'btn';
         else if (k === KEY.ENTER && D.more[D.mi]) { openDetail(D.more[D.mi], 'more'); return; }
+        break;
+      case 'shots':
+        if (k === KEY.LEFT || k === KEY.RIGHT) {
+          D.shi = clamp(D.shi + (k === KEY.LEFT ? -1 : 1), 0, sh.length - 1);
+          if (D.shi > D.shoff + SHOT_VIS - 1) D.shoff = D.shi - (SHOT_VIS - 1);
+          if (D.shi < D.shoff) D.shoff = D.shi;
+        } else if (k === KEY.UP) D.zone = 'btn';
+        else if (k === KEY.DOWN && D.more.length) D.zone = 'more';
+        else if (k === KEY.ENTER && sh[D.shi] && sh[D.shi].trailer) { openTrailer(sh[D.shi].trailer); return; }
+        else if (k === KEY.ENTER) D.view = D.shi;
         break;
       case 'season':
         if (k === KEY.LEFT || k === KEY.RIGHT) {
@@ -1282,11 +1431,11 @@
     P = { kind: D.kind, item: item, ep: ep, flat: flat, idx: idx, url: ep ? ep.url : item.url,
       dur: ep ? ep.dur : (D.info && D.info.dur) || 0, startMs: startMs, state: 'loading', detail: '',
       started: false, suspended: false, lastSave: Date.now(), target: null, holdUntil: 0,
-      seekTimer: 0, streak: 0, lastKey: 0, lastDir: 0, osdTimer: 0, nextTimer: 0, resumeAt: 0 };
+      seekTimer: 0, seekFrom: 0, streak: 0, zone: 'btns', btn: 'play', aspect: Store.get('vodAspect', 'auto'), lastKey: 0, lastDir: 0, osdTimer: 0, nextTimer: 0, resumeAt: 0 };
     V.view = 'player';
     setMode();
     renderPlayer();
-    Player.play(P.url, '', startMs, { aspect: 'auto' });
+    Player.play(P.url, '', startMs, { aspect: P.aspect });
   }
 
   function clearTimers() {
@@ -1360,7 +1509,10 @@
     $('vp-osd').classList.add('show');
     clearTimeout(P.osdTimer);
     P.osdTimer = setTimeout(function () {
-      if (P && !Player.paused()) $('vp-osd').classList.remove('show');
+      if (!P || Player.paused() || P.seekTimer) return;
+      $('vp-osd').classList.remove('show');
+      P.zone = 'btns';
+      P.btn = 'play';
     }, OSD_MS);
   }
 
@@ -1372,47 +1524,133 @@
   }
 
   function renderState() {
-    var el = $('vp-state'), html = '';
-    if (P.state === 'loading') html = '<div class="spinner"></div>Loading…';
+    var el = $('vp-state'), html = '', name = '<small>' + esc(clean(P.item).title) + (P.ep ? ' · ' + code(P.ep) : '') + '</small>';
+    if (P.state === 'loading') html = '<div class="spinner"></div>Loading' + name;
     else if (P.state === 'buffering') html = '<div class="spinner"></div>Buffering…';
     else if (P.state === 'error') html = 'Playback failed<small>' + esc(P.detail || 'The stream could not be played') + '</small><small>OK to retry · BACK to return</small>';
     el.innerHTML = html;
     el.classList.toggle('on', !!html);
   }
 
+  var PICON = {
+    play: '<svg viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z" fill="currentColor"/></svg>',
+    pause: '<svg viewBox="0 0 24 24"><path d="M6.5 4.5h4v15h-4zM13.5 4.5h4v15h-4z" fill="currentColor"/></svg>',
+    back: '<svg viewBox="0 0 24 24"><path d="M12 5a7.5 7.5 0 1 1-7.1 5.1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M12 2v6L8 5z" fill="currentColor"/></svg>',
+    fwd: '<svg viewBox="0 0 24 24"><path d="M12 5a7.5 7.5 0 1 0 7.1 5.1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M12 2v6l4-3z" fill="currentColor"/></svg>',
+    aspect: '<svg viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M6 12V9h3M18 12v3h-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    next: '<svg viewBox="0 0 24 24"><path d="M5 5v14l10-7z" fill="currentColor"/><path d="M17 5v14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>'
+  };
+  var VOD_ASPECTS = [{ id: 'auto', name: 'Original' }, { id: 'fill', name: 'Fill screen' }];
+
+  function clock(ms) { var d = new Date(ms); return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+
+  // "+30 s", "−1:30": how far a seek goes.
+  function delta(ms) {
+    var a = Math.abs(ms), s = Math.round(a / 1000);
+    return (ms < 0 ? '−' : '+') + (s < 60 ? s + ' s' : Math.floor(s / 60) + ':' + pad(s % 60));
+  }
+
+  // The buttons under the bar, in focus order: back 10 s, play/pause, forward 10 s, picture size, next episode.
+  function pButtons() {
+    var b = ['back', 'play', 'fwd', 'aspect'];
+    if (nextEp()) b.push('next');
+    return b;
+  }
+
+  // What the focused round button does, shown under it.
+  function btnLabel(id, paused) {
+    return id === 'back' ? 'Back 10 s' : id === 'fwd' ? 'Forward 10 s' : id === 'play' ? (paused ? 'Play' : 'Pause') : '';
+  }
+
+  // Paused: what you are watching, on the left over the dimmed picture (as the big TV apps do).
+  function pausedHtml() {
+    var c = clean(P.item), f = facts(P.kind, P.item), meta = [];
+    if (P.ep) meta.push(code(P.ep));
+    if (f.year) meta.push(esc(f.year));
+    if (P.kind === 'movie' && f.dur > 0) meta.push(longDur(f.dur));
+    genres(f.genre).slice(0, 2).forEach(function (g) { meta.push(esc(g)); });
+    var plot = P.ep && P.ep.plot ? P.ep.plot : f.plot;
+    return '<div class="vo-info"><div class="vo-kicker">You’re watching</div>' +
+      '<div class="vo-ititle">' + esc(c.title) + '</div>' +
+      (P.ep && P.ep.title ? '<div class="vo-iep">' + esc(P.ep.title) + '</div>' : '') +
+      '<div class="vo-imeta">' + meta.join('<i class="dot-sep">·</i>') + (f.rating > 0 ? '<span class="b rate">★ ' + f.rating.toFixed(1) + '</span>' : '') + '</div>' +
+      (plot ? '<div class="vo-iplot">' + esc(plot) + '</div>' : '') + '</div>';
+  }
+
+  function aspectName(id) {
+    var n = '';
+    VOD_ASPECTS.forEach(function (a) { if (a.id === id) n = a.name; });
+    return n;
+  }
+
+  // The player's controls, laid out like the big TV apps: title and clock on top; at the bottom a full-width
+  // bar with elapsed and remaining time, then buttons. Arrows move between the buttons and OK presses one;
+  // UP goes to the bar, where LEFT/RIGHT seek (faster the longer they are held).
   function renderOsd() {
     if (!P) return;
     var n = nowPos(), paused = P.started && Player.paused();
     if (P.target !== null && !P.seekTimer && Date.now() > P.holdUntil) P.target = null;
-    var pos = P.target !== null ? P.target : n.pos, pct = n.dur > 0 ? clamp(100 * pos / n.dur, 0, 100) : 0;
-    var sub = P.ep ? code(P.ep) + ' · ' + esc(P.ep.title) : '';
-    var icon = paused ? '<svg viewBox="0 0 24 24" class="ic"><path d="M7 5h4v14H7zM13 5h4v14h-4z" fill="currentColor"/></svg>'
-      : '<svg viewBox="0 0 24 24" class="ic"><path d="M7 4.5v15l12-7.5z" fill="currentColor"/></svg>';
-    $('vp-osd').innerHTML = '<div class="v-osd-title">' + esc(clean(P.item).title) + '</div>' +
-      (sub ? '<div class="v-osd-sub">' + sub + '</div>' : '') +
-      '<div class="v-bar"><i style="width:' + pct.toFixed(2) + '%"></i><b style="left:' + pct.toFixed(2) + '%"></b></div>' +
-      '<div class="v-osd-row">' + icon + '<span class="tm">' + dur(pos) + (n.dur > 0 ? ' / ' + dur(n.dur) : '') + '</span>' +
-      '<span class="hint"><kbd>◀ ▶</kbd>Seek 10 s<kbd>OK</kbd>' + (paused ? 'Play' : 'Pause') + '<kbd>BACK</kbd>Stop</span></div>';
+    var seeking = P.target !== null, pos = seeking ? P.target : n.pos, jump = seeking ? delta(P.target - P.seekFrom) : '';
+    var pct = n.dur > 0 ? clamp(100 * pos / n.dur, 0, 100) : 0, at = pct.toFixed(2) + '%';
+    var c = clean(P.item), sub = P.ep ? code(P.ep) + (P.ep.title ? ' · ' + esc(P.ep.title) : '') : [c.year, c.q].filter(Boolean).join(' · ');
+    var now = Date.now(), left = n.dur > 0 ? Math.max(0, n.dur - pos) : 0, bar = P.zone === 'bar', next = nextEp();
+    function b(id, cls, inner) {
+      var label = btnLabel(id, paused);
+      return '<span class="' + cls + (!bar && P.btn === id ? ' sel' : '') + '">' + inner + (label ? '<i class="vo-bl">' + label + '</i>' : '') + '</span>';
+    }
+    var el = $('vp-osd');
+    el.className = 'v-osd' + (el.classList.contains('show') ? ' show' : '') + (paused ? ' paused' : '') +
+      (seeking ? ' seeking' : '') + (bar ? ' z-bar' : '');
+    el.innerHTML =
+      '<div class="vo-top"><div class="vo-tl">' +
+          '<div class="vo-kind">' + (P.kind === 'movie' ? 'Movie' : 'Series') + '</div>' +
+          '<div class="vo-title">' + esc(c.title) + '</div>' + (sub ? '<div class="vo-sub">' + sub + '</div>' : '') +
+        '</div><div class="vo-tr"><div class="vo-clock">' + clock(now) + '</div>' +
+          (n.dur > 0 ? '<div class="vo-ends">Ends at ' + clock(now + left) + '</div>' : '') + '</div></div>' +
+      (paused && !seeking && !bar ? pausedHtml() : '') +
+      '<div class="vo-bot">' +
+        '<div class="vo-bar"><i style="width:' + at + '"></i><b style="left:' + at + '"><span class="vo-tip">' + dur(pos) + '<small>' + jump + '</small></span></b></div>' +
+        '<div class="vo-times"><span>' + dur(pos) + '</span><span>' + (n.dur > 0 ? '−' + dur(left) : '') + '</span></div>' +
+        '<div class="vo-ctl">' +
+          '<div class="vo-hint">' + (bar ? '<span><kbd>◀ ▶</kbd>Seek</span><span><kbd>▼</kbd>Buttons</span>'
+            : '<span><kbd>▲</kbd>Seek bar</span><span><kbd>BACK</kbd>Stop</span>') + '</div>' +
+          '<div class="vo-btns">' +
+            b('back', 'vo-b', PICON.back + '<em>10</em>') +
+            b('play', 'vo-b main', paused ? PICON.play : PICON.pause) +
+            b('fwd', 'vo-b', PICON.fwd + '<em>10</em>') +
+          '</div>' +
+
+          '<div class="vo-pills">' +
+            b('aspect', 'vo-p', PICON.aspect + '<span>' + aspectName(P.aspect) + '</span>') +
+            (next ? b('next', 'vo-p', PICON.next + '<span>Next · ' + code(next.ep) + '</span>') : '') +
+          '</div>' +
+        '</div>' +
+      '</div>';
   }
 
-  // Each press moves 10 s; presses in quick succession move further. The jump happens when the keys pause.
-  function seekBy(dir, big) {
+  // Each press moves 10 s. On the bar, presses in quick succession move further (fixed: always 10 s, the
+  // buttons). The jump happens when the presses pause.
+  function seekBy(dir, big, fixed) {
     var now = Date.now();
     P.streak = now - P.lastKey < 700 && P.lastDir === dir ? P.streak + 1 : 0;
     P.lastKey = now;
     P.lastDir = dir;
-    var step = big ? 30000 : P.streak < 3 ? 10000 : P.streak < 8 ? 30000 : 60000, n = nowPos();
+    var step = big ? 30000 : fixed || P.streak < 3 ? 10000 : P.streak < 8 ? 30000 : 60000, n = nowPos();
+    if (P.target === null) P.seekFrom = n.pos;
     var base = P.target !== null ? P.target : n.pos;
     P.target = clamp(base + dir * step, 0, Math.max(0, (n.dur || 1e12) - 500));
     clearTimeout(P.seekTimer);
-    P.seekTimer = setTimeout(function () {
-      if (!P) return;
-      P.seekTimer = 0;
-      P.holdUntil = Date.now() + SEEK_HOLD_MS;
-      Player.seek(P.target);
-      renderOsd();
-    }, SEEK_APPLY_MS);
+    P.seekTimer = setTimeout(applySeek, SEEK_APPLY_MS);
     showOsd();
+  }
+
+  function applySeek() {
+    if (!P || P.target === null) return;
+    clearTimeout(P.seekTimer);
+    P.seekTimer = 0;
+    P.holdUntil = Date.now() + SEEK_HOLD_MS;
+    Player.seek(P.target);
+    renderOsd();
   }
 
   function togglePause() {
@@ -1422,6 +1660,25 @@
     showOsd();
   }
 
+  function cycleAspect() {
+    var i = 0;
+    VOD_ASPECTS.forEach(function (a, n) { if (a.id === P.aspect) i = n; });
+    P.aspect = VOD_ASPECTS[(i + 1) % VOD_ASPECTS.length].id;
+    Store.set('vodAspect', P.aspect);
+    Player.setPlayAspect(P.aspect);
+    showOsd();
+  }
+
+  function pressButton(id) {
+    if (id === 'back') seekBy(-1, false, true);
+    else if (id === 'fwd') seekBy(1, false, true);
+    else if (id === 'play') togglePause();
+    else if (id === 'aspect') cycleAspect();
+    else if (id === 'next') playNext();
+  }
+
+  function osdShown() { return $('vp-osd').classList.contains('show'); }
+
   function playerKey(e, k) {
     e.preventDefault();
     if (P.nextTimer && P.state === 'ended') {      // "Next episode" countdown
@@ -1430,20 +1687,34 @@
       return;
     }
     switch (k) {
-      case KEY.BACK: case KEY.STOP: leavePlayer(); return;
-      case KEY.ENTER:
-        if (P.state === 'error') { startPlay(P.item, P.ep, nowPos().pos || P.startMs); return; }
-        togglePause();
-        return;
+      case KEY.BACK:
+        if (P.zone === 'bar' && osdShown()) { P.zone = 'btns'; showOsd(); return; }
+        leavePlayer(); return;
+      case KEY.STOP: leavePlayer(); return;
       case KEY.PLAY_PAUSE: togglePause(); return;
       case KEY.PLAY: if (P.started && Player.paused()) togglePause(); else showOsd(); return;
       case KEY.PAUSE: if (P.started && !Player.paused()) togglePause(); else showOsd(); return;
-      case KEY.LEFT: seekBy(-1, false); return;
-      case KEY.RIGHT: seekBy(1, false); return;
       case KEY.REWIND: seekBy(-1, true); return;
       case KEY.FAST_FORWARD: seekBy(1, true); return;
-      default: showOsd();
     }
+    if (k === KEY.ENTER && P.state === 'error') { startPlay(P.item, P.ep, nowPos().pos || P.startMs); return; }
+    var nav = k === KEY.LEFT || k === KEY.RIGHT || k === KEY.UP || k === KEY.DOWN || k === KEY.ENTER;
+    if (!nav) { showOsd(); return; }
+    if (!osdShown()) { P.zone = 'btns'; P.btn = 'play'; showOsd(); return; }   // the first press only shows them
+    if (P.zone === 'bar') {
+      if (k === KEY.LEFT || k === KEY.RIGHT) { seekBy(k === KEY.LEFT ? -1 : 1, false); return; }
+      if (k === KEY.ENTER) applySeek();
+      if (k === KEY.DOWN || k === KEY.ENTER) P.zone = 'btns';
+      showOsd();
+      return;
+    }
+    var list = pButtons(), i = Math.max(0, list.indexOf(P.btn));
+    if (k === KEY.LEFT) P.btn = list[Math.max(0, i - 1)];
+    else if (k === KEY.RIGHT) P.btn = list[Math.min(list.length - 1, i + 1)];
+    else if (k === KEY.UP) P.zone = 'bar';
+    else if (k === KEY.DOWN) { $('vp-osd').classList.remove('show'); return; }
+    else if (k === KEY.ENTER) { pressButton(list[i]); return; }
+    showOsd();
   }
 
   /* ---------- screens ---------- */
@@ -1463,7 +1734,7 @@
 
   function makeScreen(kind, name) {
     return {
-      open: function () { openKind(kind); },
+      open: function (arg) { openKind(kind, arg); },
       close: function () {
         if (P) { clearTimers(); saveProgress(false); Player.stop(); P = null; }
         D = null;
@@ -1500,7 +1771,7 @@
             P.suspended = false;
             P.state = 'loading';
             renderState();
-            Player.play(P.url, '', P.resumeAt, { aspect: 'auto' });
+            Player.play(P.url, '', P.resumeAt, { aspect: P.aspect });
           }
         } else if (hidden) {
           Player.stop();
@@ -1529,7 +1800,7 @@
   // Opens a title's detail page from the home screen; BACK there returns home.
   App.openTitle = function (kind, it) {
     var name = kind === 'movie' ? 'movies' : 'series';
-    App.go(name);
+    App.go(name, { title: true });
     if (App.current() !== name) return;
     openDetail(it, 'home');
   };

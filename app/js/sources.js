@@ -6,7 +6,8 @@
 
    Playlists.load(pl) resolves to the loaded data:
      { playlist, live: [channel], movies: [movie], series: [series], account: account|null,
-       seriesInfo(id) -> Promise, movieInfo(id) -> Promise }
+       seriesInfo(id) -> Promise, movieInfo(id) -> Promise,
+       refreshVod() -> Promise<changed> (fetches movies and series again; at most every REFRESH_MS) }
    Shapes are documented in xtream.js. Plain M3U files are split by URL: '/movie/' entries are movies,
    '/series/' entries are episodes grouped into series by their 'S01E02' names, the rest is live. */
 var Playlists = (function () {
@@ -103,6 +104,38 @@ var Playlists = (function () {
 
   /* ---------- loading ---------- */
 
+  var REFRESH_MS = 3 * 60000;
+
+  // A short fingerprint of a list: a title added or removed changes it.
+  function sig(list) {
+    var max = 0;
+    list.forEach(function (it) { if (it.added > max) max = it.added; });
+    return list.length + '|' + max + '|' + (list[0] ? list[0].id : '') + '|' + (list.length ? list[list.length - 1].id : '');
+  }
+
+  // Gives data a refreshVod(): fetch() resolves to { movies, series, seriesInfo? }; new lists replace the
+  // old ones only when they differ, so an unchanged list keeps its lookups and what the screens drew.
+  function addRefresh(data, fetch) {
+    var at = Date.now(), busy = null;
+    data.refreshVod = function () {
+      if (busy) return busy;
+      if (data.vodLoading || Date.now() - at < REFRESH_MS) return Promise.resolve(false);
+      busy = fetch().then(function (got) {
+        busy = null;
+        at = Date.now();
+        var changed = false;
+        if (got.movies.length && sig(got.movies) !== sig(data.movies)) { data.movies = got.movies; changed = true; }
+        if (got.series.length && sig(got.series) !== sig(data.series)) {
+          data.series = got.series;
+          if (got.seriesInfo) data.seriesInfo = got.seriesInfo;
+          changed = true;
+        }
+        return changed;
+      }, function (err) { busy = null; at = Date.now(); throw err; });
+      return busy;
+    };
+  }
+
   function fetchText(url) {
     return new Promise(function (resolve, reject) {
       var xhr = new XMLHttpRequest();
@@ -149,6 +182,9 @@ var Playlists = (function () {
           data.vodLoading = false;
           return data;
         });
+        addRefresh(data, function () {
+          return Promise.all([soft(x.movies()), soft(x.series())]).then(function (r) { return { movies: r[0], series: r[1] }; });
+        });
         return data;
       });
     });
@@ -194,8 +230,10 @@ var Playlists = (function () {
       }
       function movieInfo() { return Promise.resolve(null); }
 
-      return { playlist: pl, live: live, movies: movies, series: series, account: null,
+      var data = { playlist: pl, live: live, movies: movies, series: series, account: null,
         seriesInfo: seriesInfo, movieInfo: movieInfo };
+      if (pl.type !== 'demo') addRefresh(data, function () { return loadM3u(pl); });
+      return data;
     });
   }
 
