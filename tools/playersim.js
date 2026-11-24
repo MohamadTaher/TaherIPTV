@@ -211,5 +211,19 @@ console.log('9. movies show the stream\'s own aspect ratio; live channels follow
   check(q.displays[q.displays.length - 1] === 'PLAYING:FULL_SCREEN', 'Fill applies to the live channel (got ' + q.displays.slice(-1) + ')');
 })();
 
+console.log('10. a movie\'s own mode changes while it plays and does not touch the live setting');
+(function () {
+  var w = world();
+  w.P.setAspect('fit');
+  w.P.play('movie', '', 0, { aspect: 'fill' }); w.run(2000);
+  var p = w.open()[0];
+  check(p.displays[p.displays.length - 1] === 'READY:FULL_SCREEN', 'a movie can start in Fill (got ' + p.displays.join(',') + ')');
+  check(w.P.setPlayAspect('auto') === 'auto', 'setPlayAspect returns the mode in use');
+  check(p.displays[p.displays.length - 1] === 'PLAYING:AUTO_ASPECT_RATIO', 'Original applies at once (got ' + p.displays.slice(-1) + ')');
+  w.P.play('live'); w.run(2000);
+  var q = w.open()[0];
+  check(q.displays[q.displays.length - 1] === 'READY:LETTER_BOX', 'live keeps its own Fit setting (got ' + q.displays.join(',') + ')');
+})();
+
 console.log(failures ? '\n' + failures + ' check(s) FAILED' : '\nall checks passed');
 process.exit(failures ? 1 : 0);

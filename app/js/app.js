@@ -69,7 +69,7 @@
     playing: null,
     state: 'idle', stateDetail: '',
     sort: Store.get('sort', 'num'),
-    aspect: Player.setAspect(Store.get('aspect', 'fit')),
+    aspect: Player.setAspect(Store.get('liveAspect', 'fill')),   // channels fill the screen; green toggles Fit
     query: '',
     loading: false,
     tile: 0,
@@ -613,14 +613,15 @@
       }
     }
     buildView(false);
-    render();
-    // Start where the user left off.
+    S.listIndex = 0;      // the list starts at its first channel
+    // Play where the user left off.
     var last = Library.history('live')[0];
     if (!S.playing && last) {
       for (var i = 0; i < S.view.length; i++) {
-        if (S.view[i].url === (last.url || last.id)) { S.listIndex = i; play(S.view[i]); return; }
+        if (S.view[i].url === (last.url || last.id)) { play(S.view[i]); return; }
       }
     }
+    render();
   }
 
   function play(ch) {
@@ -748,7 +749,7 @@
 
   function toggleAspect() {
     S.aspect = Player.setAspect(S.aspect === 'fit' ? 'fill' : 'fit');
-    Store.set('aspect', S.aspect);
+    Store.set('liveAspect', S.aspect);
     showOsd();
   }
 
@@ -1347,6 +1348,7 @@
         S.moving = false;
         S.held = false;
         buildView(false);
+        S.listIndex = 0;      // a new category starts at its first channel
         break;
       case KEY.ENTER: case KEY.RIGHT:
         S.zone = 'list';

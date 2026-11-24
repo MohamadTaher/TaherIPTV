@@ -1,6 +1,6 @@
 /* Movies and series screens (js/vod.js). #vod shows one of three views: browse, detail, player.
    Browse and detail are opaque; the player view is transparent so the video shows through.
-   Browse: hero (backdrop + facts) over rows of landscape cards, or over a card grid with sort and rating
+   Browse: hero (backdrop + facts) over rows of 2:3 poster cards, or over a card grid with sort and rating
    chips; a category rail slides in from the left and pushes the page aside.
    Detail: backdrop, poster, facts, buttons, then cast and "More from" (movies) or episodes (series). */
 
@@ -15,15 +15,15 @@
 .bd-l { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; opacity: 0; transition: opacity .45s ease; }
 .bd-l.on { opacity: 1; }
 .bd-l.img { left: 380px; width: 1540px; height: 866px; }
-#vh-bd .bd-l.img { left: 288px; width: 1632px; height: 918px; }
+#vh-bd .bd-l.img { left: 640px; width: 1280px; height: 720px; }
 .bd-img { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; object-position: center top; }
 /* no backdrop: a faint wash of the poster's colours (the hero also shows the poster itself, sharp) */
 .bd-l.wash canvas { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; opacity: .3; }
 .vh-fade, .vd-fade { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
 .vh-fade {
   background:
-    linear-gradient(90deg, #0c0e13 15%, rgba(12, 14, 19, .92) 28%, rgba(12, 14, 19, .62) 44%, rgba(12, 14, 19, 0) 66%),
-    linear-gradient(180deg, rgba(12, 14, 19, .6) 0%, rgba(12, 14, 19, 0) 13%, rgba(12, 14, 19, 0) 40%, rgba(12, 14, 19, .8) 58%, rgba(12, 14, 19, .96) 72%, #0c0e13 86%);
+    linear-gradient(90deg, #0c0e13 34%, rgba(12, 14, 19, .82) 44%, rgba(12, 14, 19, .45) 57%, rgba(12, 14, 19, 0) 76%),
+    linear-gradient(180deg, rgba(12, 14, 19, .6) 0%, rgba(12, 14, 19, 0) 12%, rgba(12, 14, 19, 0) 20%, rgba(12, 14, 19, .8) 33%, rgba(12, 14, 19, .96) 46%, #0c0e13 58%);
 }
 .vd-fade {
   background:
@@ -67,65 +67,73 @@
 
 /* ---------- browse: hero ---------- */
 .vh-poster {
-  position: absolute; right: 140px; top: 120px; width: 260px; height: 390px; border-radius: 12px; overflow: hidden;
+  position: absolute; right: 96px; top: 108px; width: 108px; height: 162px; border-radius: 8px; overflow: hidden;
   opacity: 0; transition: opacity .45s ease; box-shadow: 0 30px 60px rgba(0, 0, 0, .6), 0 0 0 1px rgba(255, 255, 255, .06);
 }
 .v-bd.poster ~ .vh-poster { opacity: 1; }
 .vh-pimg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; }
-.vh-pimg .ini { font-size: 80px; }
+.vh-pimg .ini { font-size: 40px; }
 .vh-pimg img, .vd-poster img { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; }
 
 /* Hero text and rows move together: the category rail pushes them aside. */
 .v-content { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transition: transform .3s var(--ease); }
-.rail .v-content { -webkit-transform: translateX(440px); transform: translateX(440px); }
+.rail .v-content { -webkit-transform: translateX(500px); transform: translateX(500px); }
 
 /* The hero text sits on the rows: short text sits low, long text grows upward. */
-.vh-info { position: absolute; left: 96px; bottom: 470px; width: 960px; text-shadow: 0 2px 14px rgba(0, 0, 0, .6); }
+.vh-info { position: absolute; left: 96px; bottom: 810px; width: 1100px; text-shadow: 0 2px 14px rgba(0, 0, 0, .6); }
 .vh-kicker {
-  margin-bottom: 10px; font-size: 19px; letter-spacing: 3px; text-transform: uppercase; font-weight: 700; color: var(--accent);
+  margin-bottom: 6px; font-size: 17px; letter-spacing: 3px; text-transform: uppercase; font-weight: 700; color: var(--accent);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .dot-sep { font-style: normal; margin: 0 12px; opacity: .6; }
 .vh-title {
-  font-size: 68px; font-weight: 800; line-height: 1.05; letter-spacing: -1px; max-height: 143px; overflow: hidden;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  font-size: 48px; font-weight: 800; line-height: 1.12; letter-spacing: -.5px; overflow: hidden;
+  white-space: nowrap; text-overflow: ellipsis;
 }
-.vh-meta { margin-top: 18px; height: 40px; display: flex; align-items: center; font-size: 26px; white-space: nowrap; color: #e4e6eb; }
+.vh-meta { margin-top: 6px; height: 40px; display: flex; align-items: center; font-size: 26px; white-space: nowrap; color: #e4e6eb; }
 .b { margin-left: 14px; padding: 2px 11px; border-radius: 7px; font-size: 21px; font-weight: 700; text-shadow: none; }
 .vh-meta .b:first-child { margin-left: 0; }
 .b.rate { color: var(--accent); background: rgba(0, 0, 0, .5); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .2); }
 .b.q { color: #fff; box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .75); }
 .b.new { color: var(--on-accent); background: var(--accent); }
 .vh-plot {
-  margin-top: 16px; width: 860px; font-size: 24px; line-height: 1.45; color: var(--text-2); max-height: 105px; overflow: hidden;
-  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  margin-top: 6px; width: 1000px; font-size: 22px; line-height: 1.4; color: var(--text-2); overflow: hidden;
+  white-space: nowrap; text-overflow: ellipsis;
 }
-.vh-cont { margin-top: 18px; height: 32px; display: flex; align-items: center; font-size: 22px; color: var(--text); white-space: nowrap; }
+.vh-cont { margin-top: 8px; height: 32px; display: flex; align-items: center; font-size: 22px; color: var(--text); white-space: nowrap; }
 .vh-cont .v-prog { position: relative; left: auto; right: auto; bottom: auto; width: 300px; height: 6px; margin-right: 16px; border-radius: 3px; overflow: hidden; }
 .vh-cont .v-prog i { height: 6px; }
 
-/* ---------- browse: rows and grid of landscape cards ---------- */
-.v-rows { position: absolute; left: 0; top: 628px; width: 1920px; height: 452px; overflow: hidden; }
-.vr { position: absolute; left: 0; top: 0; width: 1920px; height: 236px; }
+/* ---------- browse: rows and grid of poster cards (226x339, 2:3) ---------- */
+/* Two rows show. The clips end at a whole card: 7 cards, 5 with the rail open (the rail pushes 500 px).
+   Rows (and grid rows) are their own layers and slide into place. */
+.v-rows { position: absolute; left: 0; top: 280px; width: 1920px; height: 800px; overflow: hidden; }
+.vr { position: absolute; left: 0; top: 0; width: 1920px; height: 400px; will-change: transform; transition: transform .3s var(--ease); }
 .vr-head, .vg-head { position: absolute; left: 96px; top: 0; height: 40px; display: flex; align-items: center; white-space: nowrap; }
 .vr-name { font-size: 26px; font-weight: 700; color: var(--text); }
 .vr:not(.focus) .vr-name { color: var(--text-2); }
 .vr-count { margin-left: 12px; font-size: 20px; color: var(--muted); }
-.vr-clip { position: absolute; left: 80px; top: 38px; width: 1840px; height: 194px; overflow: hidden; }
-.vr-strip { position: absolute; left: 16px; top: 12px; height: 172px; transition: transform .28s var(--ease); }
-.vg-row { position: absolute; left: 96px; width: 1740px; height: 172px; }
+.vr-clip { position: absolute; left: 80px; top: 34px; width: 1758px; height: 370px; overflow: hidden; }
+.vr-strip { position: absolute; left: 16px; top: 12px; height: 352px; transition: transform .28s var(--ease); }
+.vg-body { position: absolute; left: 0; top: 40px; width: 1920px; height: 760px; overflow: hidden; }
+.vg-row {
+  position: absolute; left: 80px; top: 0; width: 1758px; height: 370px; overflow: hidden;
+  will-change: transform; transition: transform .3s var(--ease);
+}
+.vg-row .vc { top: 12px; }
+.rail .vr-clip, .rail .vg-row { width: 1258px; }
 
-.vc { position: absolute; top: 0; width: 272px; height: 166px; }
+.vc { position: absolute; top: 0; width: 226px; height: 352px; }
 .vc-img {
-  position: relative; width: 272px; height: 153px; border-radius: 8px; overflow: hidden; background: var(--panel-2);
+  position: relative; width: 226px; height: 339px; border-radius: 9px; overflow: hidden; background: var(--panel-2);
   transition: transform .18s var(--ease), box-shadow .18s;
 }
-.vc-img img { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; }
-.vc-img.crop img { object-position: center 22%; }
+.vc-img img { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: contain; background: #090a0d; }
+.vc-img.has-img .vc-g, .vc-img.has-img .vc-t { display: none; }   /* the poster names itself; the hero has the title */
 .vc-g { position: absolute; left: 0; right: 0; bottom: 0; height: 78px; background: linear-gradient(180deg, rgba(0, 0, 0, 0), rgba(0, 0, 0, .82)); }
 .vc-t {
-  position: absolute; left: 14px; right: 14px; bottom: 10px; font-size: 21px; font-weight: 700; color: #fff;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 4px rgba(0, 0, 0, .8);
+  position: absolute; left: 12px; right: 12px; bottom: 10px; font-size: 20px; font-weight: 700; color: #fff; line-height: 1.25;
+  max-height: 75px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; text-shadow: 0 1px 4px rgba(0, 0, 0, .8);
 }
 .vc-rate {
   position: absolute; right: 8px; top: 8px; padding: 1px 8px; border-radius: 6px; font-size: 17px; font-weight: 700;
@@ -136,9 +144,9 @@
   position: absolute; left: 8px; top: 8px; padding: 1px 8px; border-radius: 6px; font-size: 14px; font-weight: 800;
   letter-spacing: 1px; color: var(--on-accent); background: var(--accent);
 }
-.vc-bar { position: absolute; left: 0; top: 161px; width: 272px; height: 5px; border-radius: 3px; overflow: hidden; transition: transform .18s var(--ease); }
-.vc.sel .vc-img { transform: scale(1.06); box-shadow: 0 0 0 4px #fff, 0 16px 36px rgba(0, 0, 0, .65); }
-.vc.sel .vc-bar { transform: translateY(6px); }
+.vc-bar { position: absolute; left: 0; top: 347px; width: 226px; height: 5px; border-radius: 3px; overflow: hidden; transition: transform .18s var(--ease); }
+.vc.sel .vc-img { transform: scale(1.04); box-shadow: 0 0 0 4px #fff, 0 16px 36px rgba(0, 0, 0, .65); }
+.vc.sel .vc-bar { transform: translateY(8px); }
 .vc.all .vc-img {
   display: flex; align-items: center; justify-content: center; text-align: center;
   background: rgba(255, 255, 255, .06); box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .12);
@@ -169,8 +177,8 @@
 /* ---------- browse: category rail ---------- */
 /* No panel or scrim: the rail fades in over the backdrop and pushes the page aside (.rail .v-content). */
 .v-rail {
-  position: absolute; left: 0; top: 0; width: 820px; height: 1080px;
-  background: linear-gradient(90deg, rgba(12, 14, 19, .97) 0, rgba(12, 14, 19, .93) 440px, rgba(12, 14, 19, .55) 600px, rgba(12, 14, 19, 0) 820px);
+  position: absolute; left: 0; top: 0; width: 600px; height: 1080px;
+  background: linear-gradient(90deg, rgba(12, 14, 19, .97) 0, rgba(12, 14, 19, .93) 500px, rgba(12, 14, 19, 0) 590px);
   opacity: 0; visibility: hidden; -webkit-transform: translateX(-80px); transform: translateX(-80px);
   transition: opacity .26s ease, transform .3s var(--ease), visibility 0s .3s;
 }
@@ -180,7 +188,7 @@
   color: var(--accent); white-space: nowrap;
 }
 .vrl-sub span { margin-left: 14px; letter-spacing: 1px; color: var(--muted); }
-#vrl-items { position: absolute; left: 76px; top: 172px; width: 400px; }
+#vrl-items { position: absolute; left: 76px; top: 172px; width: 460px; }
 .vrl-item {
   height: 58px; margin-bottom: 4px; padding: 0 20px; border-radius: 10px; display: flex; align-items: center;
   font-size: 25px; color: var(--muted); white-space: nowrap;
@@ -220,22 +228,30 @@
 .vd-plot.open { max-height: 390px; }
 .vd-plot.sel { color: #fff; box-shadow: -20px 0 0 -14px var(--accent); }
 .vd-plot.dim, .vd-plot .dim { color: var(--muted); }
-.vd-prog { margin-top: 22px; display: flex; align-items: center; font-size: 21px; color: var(--text-2); }
-.vd-prog .v-prog { position: relative; left: auto; right: auto; bottom: auto; width: 360px; height: 6px; margin-right: 16px; border-radius: 3px; overflow: hidden; }
-.vd-prog .v-prog i { height: 6px; }
-.vd-btns { margin-top: 26px; height: 80px; display: flex; align-items: center; }
+.vd-btns { margin-top: 30px; height: 92px; display: flex; align-items: center; }
 .vd-btn {
-  height: 72px; padding: 0 30px 0 24px; margin-right: 16px; border-radius: 14px; display: flex; align-items: center; white-space: nowrap;
-  color: var(--text); background: rgba(255, 255, 255, .1); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .14);
-  transition: transform .14s var(--ease);
+  position: relative; height: 72px; padding: 0 30px 0 24px; margin-right: 16px; border-radius: 36px; display: flex; align-items: center;
+  white-space: nowrap; color: var(--text); background: rgba(255, 255, 255, .1); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .16);
+  transition: transform .14s var(--ease), background .14s;
 }
 .vd-btn .ic { width: 30px; height: 30px; margin-right: 14px; flex: none; }
 .vd-btn .l b { display: block; font-size: 25px; font-weight: 700; line-height: 1.15; }
 .vd-btn .l small { display: block; font-size: 18px; line-height: 1.25; color: var(--muted); }
-.vd-btn.primary { color: #111; background: #fff; box-shadow: none; }
+/* the main button: white pill, a dark round play icon, the bar of how far you got along the bottom */
+.vd-btn.primary { height: 88px; min-width: 250px; padding: 0 40px 0 14px; border-radius: 44px; margin-right: 20px; color: #111; background: #fff; box-shadow: 0 10px 30px rgba(0, 0, 0, .4); }
+.vd-btn.primary .pi {
+  width: 60px; height: 60px; margin-right: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  flex: none; color: #fff; background: #111;
+}
+.vd-btn.primary .pi .ic { width: 28px; height: 28px; margin: 0 0 0 4px; }
+.vd-btn.primary .l b { font-size: 29px; }
 .vd-btn.primary small { color: #5b5f68; }
-.vd-btn.sel { color: var(--on-accent); background: var(--accent); transform: scale(1.05); box-shadow: 0 0 0 4px rgba(255, 181, 46, .3), 0 12px 30px rgba(0, 0, 0, .45); }
+.vd-btn .pb { display: block; width: 100%; min-width: 160px; height: 5px; margin-top: 7px; border-radius: 3px; background: rgba(0, 0, 0, .15); overflow: hidden; }
+.vd-btn .pb i { display: block; height: 5px; background: #111; }
+.vd-btn.sel { color: var(--on-accent); background: var(--accent); transform: scale(1.06); box-shadow: 0 0 0 5px rgba(255, 181, 46, .3), 0 12px 30px rgba(0, 0, 0, .45); }
 .vd-btn.sel small { color: rgba(23, 18, 10, .7); }
+.vd-btn.primary.sel .pi { color: var(--accent); }
+.vd-btn.sel .pb { background: rgba(23, 18, 10, .2); }
 .vd-facts { margin-top: 24px; font-size: 23px; line-height: 1.7; color: var(--text); }
 .vd-facts div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .vd-facts .k { display: inline-block; width: 150px; color: var(--muted); }
@@ -246,6 +262,7 @@
 .vd-sec .t { font-size: 32px; font-weight: 700; margin-right: 18px; }
 .vd-sec .c { margin-left: 8px; font-size: 22px; color: var(--muted); }
 .vd-cast { margin-top: 18px; height: 190px; display: flex; }
+.vd-lower > .vd-sec:not(.eps) { margin-top: 36px; }   /* cast & crew, last on a movie's page */
 .pp { width: 150px; margin-right: 22px; text-align: center; }
 .av {
   width: 120px; height: 120px; margin: 0 auto; border-radius: 50%; display: flex; align-items: center; justify-content: center;
@@ -253,9 +270,41 @@
 }
 .pp .nm { display: block; margin-top: 12px; font-size: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pp .rl { display: block; font-size: 17px; color: var(--muted); }
-.vd-more { position: relative; margin-top: 36px; height: 250px; }
-.vd-more .vr-clip { left: -40px; top: 52px; width: 1840px; }
+.vd-more { position: relative; margin-top: 36px; height: 420px; }
+.vd-more .vr-clip { left: -40px; top: 52px; width: 1782px; }
 .vd-more .vr-strip { left: 40px; }
+
+.vd-shots { position: relative; margin-top: 36px; height: 300px; }
+.vs-clip { position: absolute; left: -40px; top: 52px; width: 1760px; height: 248px; overflow: hidden; }
+.vs-strip { position: absolute; left: 40px; top: 12px; height: 225px; transition: transform .28s var(--ease); }
+.vs {
+  position: absolute; top: 0; width: 400px; height: 225px; border-radius: 10px; overflow: hidden; background: var(--panel-2);
+  transition: transform .18s var(--ease), box-shadow .18s;
+}
+.vs img { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; }
+.vs.bad img { display: none; }
+.vs.trailer .vs-shade { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background: linear-gradient(180deg, rgba(0, 0, 0, .1), rgba(0, 0, 0, .55)); }
+.vs-play {
+  position: absolute; left: 168px; top: 80px; width: 64px; height: 64px; border-radius: 50%; display: flex; align-items: center;
+  justify-content: center; color: #111; background: rgba(255, 255, 255, .92); box-shadow: 0 6px 20px rgba(0, 0, 0, .5);
+}
+.vs-play .ic { width: 30px; height: 30px; margin-left: 4px; }
+.vs-l { position: absolute; left: 16px; bottom: 12px; font-size: 22px; font-weight: 700; text-shadow: 0 1px 6px #000; }
+.vs.trailer.sel .vs-play { color: var(--on-accent); background: var(--accent); }
+.vs.sel { transform: scale(1.05); box-shadow: 0 0 0 4px #fff, 0 16px 36px rgba(0, 0, 0, .65); }
+/* a screenshot full screen */
+.vd-view { display: none; position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; background: #000; }
+.vd-view.on { display: block; }
+.vd-view .spinner { position: absolute; left: 930px; top: 510px; }
+.vd-view img { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; object-fit: contain; opacity: 0; transition: opacity .3s; }
+.vd-view img.ok { opacity: 1; }
+.vv-bar {
+  position: absolute; left: 0; bottom: 0; width: 1920px; height: 120px; display: flex; align-items: flex-end; justify-content: space-between;
+  box-sizing: border-box; padding: 0 96px 36px; background: linear-gradient(0deg, rgba(0, 0, 0, .8), rgba(0, 0, 0, 0));
+  font-size: 23px; color: var(--text-2);
+}
+.vv-n { font-size: 26px; font-weight: 700; color: #fff; }
+.vv-k kbd { margin: 0 10px 0 24px; }
 
 .vd-eps { margin-top: 18px; width: 1680px; }
 .vd-ep {
@@ -292,24 +341,96 @@
 }
 .v-state.on { display: flex; }
 .v-state small { font-size: 23px; margin-top: 8px; color: var(--text-2); }
-.v-osd {
-  position: absolute; left: 0; right: 0; bottom: 0; height: 320px; padding: 0 90px 56px;
-  display: flex; flex-direction: column; justify-content: flex-end;
-  background: linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, .45) 35%, rgba(0, 0, 0, .8) 65%, rgba(0, 0, 0, .88) 100%);
-  text-shadow: 0 0 3px #000, 0 2px 10px rgba(0, 0, 0, .95);
-  opacity: 0; transform: translateY(16px); transition: opacity .22s, transform .22s var(--ease);
+/* Controls over the video: a dark fade at the top (title, clock) and the bottom (bar, times, buttons).
+   Only see-through layers: the video plays under the page. */
+.v-osd { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; opacity: 0; transition: opacity .25s ease; }
+.v-osd.show { opacity: 1; }
+.v-osd.paused { background: rgba(0, 0, 0, .45); }
+.vo-top {
+  position: absolute; left: 0; top: 0; width: 1920px; height: 280px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, .85) 0%, rgba(0, 0, 0, .6) 45%, rgba(0, 0, 0, 0) 100%);
 }
-.v-osd.show { opacity: 1; transform: translateY(0); }
-.v-osd-title { font-size: 41px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.v-osd-sub { margin-top: 6px; font-size: 26px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.v-bar { position: relative; margin-top: 22px; height: 8px; border-radius: 8px; background: rgba(255, 255, 255, .22); }
-.v-bar i { display: block; height: 8px; border-radius: 8px; background: var(--accent); }
-.v-bar b { position: absolute; top: -6px; width: 20px; height: 20px; margin-left: -10px; border-radius: 50%; background: #fff; box-shadow: 0 2px 8px rgba(0, 0, 0, .6); }
-.v-osd-row { margin-top: 16px; height: 36px; display: flex; align-items: center; font-size: 26px; }
-.v-osd-row .ic { width: 30px; height: 30px; color: var(--accent); margin-right: 18px; flex: none; }
-.v-osd-row .tm { font-variant-numeric: tabular-nums; font-weight: 600; }
-.v-osd-row .hint { margin-left: auto; font-size: 21px; color: var(--text-2); white-space: nowrap; }
-.v-osd-row .hint kbd { margin-left: 22px; }
+.vo-tl { position: absolute; left: 96px; top: 60px; width: 1300px; text-shadow: 0 2px 10px rgba(0, 0, 0, .6); }
+.vo-kind { font-size: 18px; letter-spacing: 3px; text-transform: uppercase; font-weight: 700; color: var(--accent); }
+.vo-title { margin-top: 6px; font-size: 46px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vo-sub { margin-top: 4px; font-size: 25px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vo-tr { position: absolute; right: 96px; top: 60px; text-align: right; text-shadow: 0 2px 10px rgba(0, 0, 0, .6); }
+.vo-clock { font-size: 40px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.vo-ends { margin-top: 4px; font-size: 22px; color: #e4e6eb; }
+
+/* paused: what you are watching, left of centre */
+.vo-info { position: absolute; left: 96px; top: 300px; width: 1000px; text-shadow: 0 2px 12px rgba(0, 0, 0, .7); }
+.vo-kicker { font-size: 20px; letter-spacing: 3px; text-transform: uppercase; font-weight: 700; color: var(--accent); }
+.vo-ititle { margin-top: 10px; font-size: 64px; font-weight: 800; line-height: 1.08; letter-spacing: -.5px; max-height: 140px; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.vo-iep { margin-top: 8px; font-size: 30px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vo-imeta { margin-top: 14px; height: 40px; display: flex; align-items: center; font-size: 25px; color: #e4e6eb; white-space: nowrap; }
+.vo-iplot { margin-top: 14px; width: 900px; font-size: 25px; line-height: 1.5; color: var(--text-2); max-height: 113px; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+
+.vo-bot {
+  position: absolute; left: 0; bottom: 0; width: 1920px; height: 340px;
+  background: linear-gradient(0deg, rgba(0, 0, 0, .92) 0%, rgba(0, 0, 0, .75) 45%, rgba(0, 0, 0, 0) 100%);
+}
+.vo-bar { position: absolute; left: 96px; top: 118px; width: 1728px; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, .25); }
+.vo-bar i { display: block; height: 6px; border-radius: 3px; background: var(--accent); }
+.vo-bar b {
+  position: absolute; top: -8px; width: 22px; height: 22px; margin-left: -11px; border-radius: 50%; background: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .6);
+}
+.vo-tip {
+  display: none; position: absolute; left: 11px; bottom: 34px; padding: 6px 14px; border-radius: 8px; white-space: nowrap;
+  font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; color: #111; background: #fff;
+  -webkit-transform: translateX(-50%); transform: translateX(-50%);
+}
+.vo-tip small:empty { display: none; }
+.vo-tip small { margin-left: 10px; font-size: 20px; color: #6b5a2c; }
+.seeking .vo-tip { display: block; }
+.seeking .vo-bar { height: 8px; top: 117px; }
+.seeking .vo-bar i { height: 8px; }
+.vo-times {
+  position: absolute; left: 96px; top: 142px; width: 1728px; display: flex; justify-content: space-between;
+  font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; text-shadow: 0 1px 6px #000;
+}
+.vo-times span:last-child { color: var(--text-2); }
+.vo-ctl { position: absolute; left: 96px; top: 188px; width: 1728px; height: 96px; }
+.vo-btns { position: absolute; left: 50%; top: 0; height: 96px; display: flex; align-items: center; -webkit-transform: translateX(-50%); transform: translateX(-50%); }
+.vo-b {
+  position: relative; width: 66px; height: 66px; margin: 0 18px; border-radius: 50%; display: flex; align-items: center;
+  justify-content: center; color: #fff; background: rgba(255, 255, 255, .14); transition: transform .14s var(--ease);
+}
+.vo-b svg { width: 40px; height: 40px; }
+.vo-b em { position: absolute; left: 0; top: 0; width: 66px; line-height: 68px; text-align: center; font-style: normal; font-size: 13px; font-weight: 800; }
+/* play/pause: the main button, always white; amber with a glow when focused */
+.vo-b.main { width: 92px; height: 92px; margin: 0 26px; color: #fff; background: rgba(255, 255, 255, .26); box-shadow: 0 8px 24px rgba(0, 0, 0, .4); }
+.vo-b.main svg { width: 42px; height: 42px; }
+.vo-pills { position: absolute; right: 0; top: 0; height: 96px; display: flex; align-items: center; }
+.vo-p {
+  height: 56px; margin-left: 14px; padding: 0 24px 0 18px; border-radius: 28px; display: flex; align-items: center;
+  font-size: 22px; font-weight: 600; white-space: nowrap; color: #fff; background: rgba(255, 255, 255, .14);
+  transition: transform .14s var(--ease);
+}
+.vo-p svg { width: 28px; height: 28px; margin-right: 10px; flex: none; }
+/* focus is amber on every button; play/pause is the bigger, brighter one */
+.vo-b.sel, .vo-p.sel, .vo-b.main.sel {
+  color: var(--on-accent); background: var(--accent); transform: scale(1.12);
+  box-shadow: 0 0 0 6px rgba(255, 181, 46, .28), 0 10px 30px rgba(0, 0, 0, .55);
+}
+.vo-bl {
+  display: none; position: absolute; left: 50%; top: 100%; width: 200px; margin: 12px 0 0 -100px; text-align: center;
+  font-style: normal; font-size: 19px; font-weight: 600; color: #fff; text-shadow: 0 1px 6px #000;
+}
+.vo-b.sel .vo-bl { display: block; }
+/* paused: the title moves to the "You're watching" panel */
+.v-osd.paused:not(.z-bar):not(.seeking) .vo-tl { visibility: hidden; }
+.vo-hint { position: absolute; left: 0; top: 0; height: 96px; display: flex; align-items: center; font-size: 21px; color: var(--text-2); white-space: nowrap; }
+.vo-hint span { display: flex; align-items: center; margin-right: 24px; }
+.vo-hint kbd { margin-right: 10px; }
+/* the bar has the focus: a bigger thumb with an amber ring, and the time above it */
+.z-bar .vo-bar b { top: -12px; width: 30px; height: 30px; margin-left: -15px; box-shadow: 0 0 0 5px rgba(255, 181, 46, .55), 0 2px 8px rgba(0, 0, 0, .6); }
+.z-bar .vo-tip { display: block; left: 15px; }
+.z-bar .vo-bar { height: 8px; top: 117px; }
+.z-bar .vo-bar i { height: 8px; }
 .v-next {
   position: absolute; right: 90px; bottom: 360px; width: 520px; padding: 22px 28px; border-radius: 16px; display: none;
   background: rgba(14, 16, 21, .94); box-shadow: inset 0 0 0 2px var(--accent);

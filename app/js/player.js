@@ -25,12 +25,12 @@ var Player = (function () {
   var FRAME_POLLS = 100;      // ...and for how long (5 s)
   var RECT = [0, 0, 1920, 1080];
   var ASPECTS = { fit: 'PLAYER_DISPLAY_MODE_LETTER_BOX', fill: 'PLAYER_DISPLAY_MODE_FULL_SCREEN' };
-  // Movies and episodes show the shape the provider encoded (play(..., { aspect: 'auto' })); the Fit/Fill
+  var MODES = { auto: 'PLAYER_DISPLAY_MODE_AUTO_ASPECT_RATIO', fit: ASPECTS.fit, fill: ASPECTS.fill };
+  // Movies and episodes bring their own mode (play(..., { aspect: 'auto' | 'fill' }), setPlayAspect); the Fit/Fill
   // toggle is for live channels.
-  var AUTO = 'PLAYER_DISPLAY_MODE_AUTO_ASPECT_RATIO';
 
   var aspect = 'fit';
-  var auto = false;       // the current play shows the stream's own aspect ratio
+  var own = '';           // the current play's own display mode ('auto' | 'fit' | 'fill'); '' = the Fit/Fill setting
   var token = 0;          // bumps on every play/stop so late callbacks from old streams are ignored
   var pending = 0;        // timer of a play that has not started yet
   var lastPlay = 0;
@@ -139,7 +139,7 @@ var Player = (function () {
   function applyDisplay() {
     try {
       av.setDisplayRect(RECT[0], RECT[1], RECT[2], RECT[3]);
-      av.setDisplayMethod(auto ? AUTO : ASPECTS[aspect]);
+      av.setDisplayMethod(MODES[mode()]);
     } catch (err) { /* not open */ }
   }
 
@@ -196,12 +196,12 @@ var Player = (function () {
   /* ---------- play and stop ---------- */
 
   // Reports 'loading' at once, lets the page paint it, then swaps streams.
-  // opts.aspect 'auto': show the stream's own aspect ratio (movies, episodes) instead of Fit/Fill.
+  // opts.aspect 'auto' | 'fit' | 'fill': this play's own display mode (movies, episodes) instead of the Fit/Fill setting.
   function play(url, ua, startMs, opts) {
     token++;
     startAt = startMs > 0 ? startMs : 0;
-    auto = !!opts && opts.aspect === 'auto';
-    vid.classList.toggle('fill', !auto && aspect === 'fill');
+    own = opts && MODES[opts.aspect] ? opts.aspect : '';
+    vid.classList.toggle('fill', mode() === 'fill');
     var my = token, now = Date.now();
     clearTimeout(pending);
     onState('loading', '');
@@ -256,9 +256,19 @@ var Player = (function () {
     try { return !!cur && av.getState() === 'PAUSED'; } catch (e) { return false; }
   }
 
-  function setAspect(mode) {
-    aspect = ASPECTS[mode] ? mode : 'fit';
-    vid.classList.toggle('fill', !auto && aspect === 'fill');
+  function mode() { return own || aspect; }
+
+  // Changes the current play's own display mode ('auto' | 'fit' | 'fill'). Returns the mode in use.
+  function setPlayAspect(m) {
+    own = MODES[m] ? m : '';
+    vid.classList.toggle('fill', mode() === 'fill');
+    if (cur) applyDisplay();
+    return mode();
+  }
+
+  function setAspect(m) {
+    aspect = ASPECTS[m] ? m : 'fit';
+    vid.classList.toggle('fill', mode() === 'fill');
     if (cur) applyDisplay();
     return aspect;
   }
@@ -268,7 +278,7 @@ var Player = (function () {
   // Position, duration (ms; 0 for live), video size and the timing of the last start.
   // Also used by tools/tvdebug.py.
   function info() {
-    var out = { native: native, time: 0, duration: 0, width: 0, height: 0, aspect: auto ? 'auto' : aspect };
+    var out = { native: native, time: 0, duration: 0, width: 0, height: 0, aspect: mode() };
     if (!native) {
       out.time = Math.round(vid.currentTime * 1000);
       out.duration = isFinite(vid.duration) ? Math.round(vid.duration * 1000) : 0;
@@ -350,6 +360,7 @@ var Player = (function () {
     paused: paused,
     info: info,
     setAspect: setAspect,
+    setPlayAspect: setPlayAspect,
     onState: function (fn) { onState = fn; }
   };
 })();

@@ -6,9 +6,10 @@
      live()             [{ num, name, logo, group, id, url, ua }]          (same shape as M3U.parse)
      movies()           [{ kind:'movie', id, name, poster, group, added, rating, url }]
      series()           [{ kind:'series', id, name, poster, group, added, rating, plot, genre, year }]
-     seriesInfo(id)     { plot, genre, year, poster, backdrop, seasons: [{ num, episodes: [episode] }] }
+     seriesInfo(id)     { plot, genre, year, poster, backdrop, shots, trailer, seasons: [{ num, episodes: [episode] }] }
                         episode = { kind:'episode', id, num, season, title, url, dur (ms), poster, plot }
-     movieInfo(id)      { plot, genre, year, cast, director, dur (ms), poster, backdrop, rating }
+     movieInfo(id)      { plot, genre, year, cast, director, dur (ms), poster, backdrop, shots, trailer, rating }
+                        shots: every backdrop image the panel lists; trailer: a YouTube video id or ''
    All calls return Promises. Times are ms. */
 var Xtream = (function () {
   'use strict';
@@ -54,9 +55,18 @@ var Xtream = (function () {
   function first(v) { return String((Array.isArray(v) ? v[0] : v) || ''); }
   // Some panels leave backdrop_path empty and list the backdrops in "backdrop", one URL per line
   // (NASA, 2026-11-18: 7 movies in 8, sizes 1280x720 to 3840x2160).
-  function backdropOf(info) {
-    var m = /https?:\/\/\S+/.exec(String(info.backdrop || ''));
-    return first(info.backdrop_path) || (m ? m[0] : '');
+  function backdropsOf(info) {
+    var out = [], seen = {};
+    function add(u) { u = String(u || '').trim(); if (/^https?:\/\//i.test(u) && !seen[u]) { seen[u] = 1; out.push(u); } }
+    (Array.isArray(info.backdrop_path) ? info.backdrop_path : [info.backdrop_path]).forEach(add);
+    (String(info.backdrop || '').match(/https?:\/\/\S+/g) || []).forEach(add);
+    return out;
+  }
+  function backdropOf(info) { return backdropsOf(info)[0] || ''; }
+  // youtube_trailer is a video id on most panels, a full YouTube link on some.
+  function trailerOf(info) {
+    var m = /(?:[?&]v=|youtu\.be\/|embed\/|^)([\w-]{11})(?:[?&#]|$)/.exec(String(info.youtube_trailer || info.trailer || '').trim());
+    return m ? m[1] : '';
   }
 
   function client(login) {
@@ -158,7 +168,8 @@ var Xtream = (function () {
         return {
           plot: info.plot || '', genre: info.genre || '', year: year(info.releaseDate || info.release_date),
           cast: info.cast || '', director: info.director || '', rating: num(info.rating),
-          poster: info.cover || '', backdrop: backdropOf(info), seasons: seasons
+          poster: info.cover || '', backdrop: backdropOf(info), shots: backdropsOf(info), trailer: trailerOf(info),
+          seasons: seasons
         };
       });
     }
@@ -169,7 +180,7 @@ var Xtream = (function () {
         return {
           plot: i.plot || i.description || '', genre: i.genre || '', year: year(i.releasedate || i.release_date),
           cast: i.cast || i.actors || '', director: i.director || '', dur: secs(i.duration_secs),
-          poster: i.movie_image || i.cover_big || '', backdrop: backdropOf(i),
+          poster: i.movie_image || i.cover_big || '', backdrop: backdropOf(i), shots: backdropsOf(i), trailer: trailerOf(i),
           rating: num(i.rating)
         };
       });

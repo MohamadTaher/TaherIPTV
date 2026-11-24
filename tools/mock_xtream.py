@@ -191,7 +191,7 @@ class H(BaseHTTPRequestHandler):
             body = {'info': {'plot': plot, 'genre': GENRES[vid % len(GENRES)],
                              'releasedate': f'{2018 + vid % 8}-05-01', 'cast': cast(vid), 'director': PEOPLE[(vid + 5) % 8],
                              'duration_secs': 5400 + (vid % 7) * 420, 'movie_image': self.base() + v['stream_icon'],
-                             'rating': v['rating'],
+                             'rating': v['rating'], 'youtube_trailer': 'aqz-KE-bpKQ' if vid % 3 else '',
                              # every other movie with a backdrop lists it in "backdrop" (one URL per line)
                              # and leaves backdrop_path empty, as the NASA panel does
                              'backdrop_path': [self.base() + f'/backdrop/m{vid}.svg'] if has_bd(f'm{vid}') and vid % 2 else [],
